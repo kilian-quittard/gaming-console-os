@@ -200,8 +200,10 @@ func _build_chrome() -> void:
 	# Center: horizontally-scrolling content row (scrollbar hidden)
 	_scroll = ScrollContainer.new()
 	_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_scroll.offset_top = 150
-	_scroll.offset_bottom = -96
+	# Start below the top-right toggle button (avoids tiles covering it) and
+	# leave enough height so the scaled selected tile isn't clipped at the top.
+	_scroll.offset_top = 185
+	_scroll.offset_bottom = -60
 	_scroll.offset_left = 70
 	_scroll.offset_right = -70
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
