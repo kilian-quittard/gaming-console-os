@@ -214,6 +214,8 @@ func _build_chrome() -> void:
 	# Fill the viewport so the row centers when it fits, scrolls when it overflows.
 	_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	# Taller than a tile so the scaled selected tile stays centered (no top clip).
+	_row.custom_minimum_size.y = 360
 	_scroll.add_child(_row)
 
 	# Bottom hints
@@ -404,13 +406,11 @@ func _populate_mode(instant := false) -> void:
 	if _mode == 0 and _cartridge_inserted:
 		items[0] = CARTRIDGE_GAME.duplicate()
 		items[0]["kind"] = "cartridge_in"
-	_row.add_child(_make_spacer())  # leading padding
 	for item in items:
 		var tile := _make_tile(item)
 		_row.add_child(tile)
 		_tiles.append(tile)
 		_tweens.append(null)
-	_row.add_child(_make_spacer())  # trailing padding
 	if _scroll:
 		_scroll.scroll_horizontal = 0
 
@@ -419,12 +419,6 @@ func _populate_mode(instant := false) -> void:
 	_status.modulate = Color(0.65, 0.62, 0.72)
 	await get_tree().process_frame  # let layout settle so scale pivots are right
 	_update_selection(instant)
-
-
-func _make_spacer() -> Control:
-	var c := Control.new()
-	c.custom_minimum_size = Vector2(26, 0)
-	return c
 
 
 func _icon_color(kind: String) -> Color:
