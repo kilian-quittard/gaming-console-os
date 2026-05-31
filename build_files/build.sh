@@ -10,7 +10,17 @@ set -ouex pipefail
 # https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
 
 # this installs a package from fedora repos
-dnf5 install -y tmux 
+dnf5 install -y tmux
+
+# --- Gaming console marker (Phase 2 pipeline test) ---
+# Proof that a rebased device is running OUR image and not stock bazzite-deck.
+# Verify after rebase with: cat /usr/share/gaming-console-os-release
+mkdir -p /usr/share
+cat > /usr/share/gaming-console-os-release <<'EOF'
+GAMING_CONSOLE_OS=1
+BASE=bazzite-deck
+PHASE=2-pipeline-bringup
+EOF
 
 # Use a COPR Example:
 #
