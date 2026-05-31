@@ -15,6 +15,8 @@ const MODE_BG_BOTTOM := [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)]
 const AMBER := Color(1.0, 0.74, 0.28)
 const X_BLUE := Color(0.30, 0.55, 0.98)
 const TILE_SIZE := Vector2(240, 300)
+const VISIBLE_TILES := 4   # how many tiles fill the row at once (rest scroll in)
+const ROW_SEP := 40
 
 # Content per mode. kind drives the icon style. (All placeholders for now.)
 const CONTENT := [
@@ -210,7 +212,7 @@ func _build_chrome() -> void:
 	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(_scroll)
 	_row = HBoxContainer.new()
-	_row.add_theme_constant_override("separation", 40)
+	_row.add_theme_constant_override("separation", ROW_SEP)
 	# Fill the viewport so the row centers when it fits, scrolls when it overflows.
 	_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -417,8 +419,23 @@ func _populate_mode(instant := false) -> void:
 	_selected = 0
 	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
 	_status.modulate = Color(0.65, 0.62, 0.72)
-	await get_tree().process_frame  # let layout settle so scale pivots are right
+	await get_tree().process_frame  # let layout settle so we know the row width
+	_size_tiles_to_fit()
+	await get_tree().process_frame  # let the resize settle before scaling
 	_update_selection(instant)
+
+
+# Size tiles so exactly VISIBLE_TILES fill the row width (no partial tiles at
+# the edges); extra tiles scroll in one full tile at a time.
+func _size_tiles_to_fit() -> void:
+	if _scroll == null or _tiles.is_empty():
+		return
+	var avail := _scroll.size.x
+	var tw := (avail - (VISIBLE_TILES - 1) * ROW_SEP) / float(VISIBLE_TILES)
+	tw = maxf(tw, 160.0)
+	for tile in _tiles:
+		tile.custom_minimum_size.x = tw
+		tile.pivot_offset = Vector2(tw, TILE_SIZE.y) * 0.5
 
 
 func _icon_color(kind: String) -> Color:
