@@ -173,14 +173,14 @@ func _build_chrome() -> void:
 	# panel so it reads as a single cohesive button.
 	var toggle_panel := PanelContainer.new()
 	var tstyle := StyleBoxFlat.new()
-	tstyle.bg_color = Color(0.17, 0.17, 0.24, 0.9)
+	tstyle.bg_color = Color(0.98, 0.97, 0.96, 0.95)
 	tstyle.set_corner_radius_all(16)
 	tstyle.content_margin_left = 16
 	tstyle.content_margin_right = 22
 	tstyle.content_margin_top = 12
 	tstyle.content_margin_bottom = 12
 	tstyle.set_border_width_all(1)
-	tstyle.border_color = Color(1, 1, 1, 0.10)
+	tstyle.border_color = Color(0, 0, 0, 0.10)
 	toggle_panel.add_theme_stylebox_override("panel", tstyle)
 	toggle_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	toggle_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -199,6 +199,7 @@ func _build_chrome() -> void:
 
 	_toggle_label = Label.new()
 	_toggle_label.add_theme_font_size_override("font_size", 26)
+	_toggle_label.add_theme_color_override("font_color", Color(0.16, 0.14, 0.18))
 	_toggle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	thb.add_child(_toggle_label)
 
@@ -298,7 +299,7 @@ func _build_chrome() -> void:
 	_status = Label.new()
 	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status.add_theme_font_size_override("font_size", 22)
+	_status.add_theme_font_size_override("font_size", 16)
 	_status.modulate = Color(0.65, 0.62, 0.72)
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_status.offset_top = -70
@@ -381,10 +382,14 @@ func _sparkle_points(ctr: Vector2, long: float, short: float, inner: float) -> P
 
 func _draw_brand_star(c: Control) -> void:
 	var ctr := c.size * 0.5
-	# white; tinted via modulate per theme
-	c.draw_colored_polygon(_sparkle_points(ctr, 15.0, 7.5, 2.6), Color(1, 1, 1))
-	# little secondary sparkle for flair
-	c.draw_colored_polygon(_sparkle_points(ctr + Vector2(12, -11), 5.0, 2.4, 0.9), Color(1, 1, 1, 0.85))
+	var outer := 15.0
+	var inner := 5.0
+	var pts := PackedVector2Array()
+	for i in 8:
+		var ang := deg_to_rad(-90.0 + i * 45.0)
+		var r := outer if i % 2 == 0 else inner
+		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
+	c.draw_colored_polygon(pts, Color(1, 1, 1))  # white; tinted via modulate per theme
 
 
 func _draw_spark(c: Control) -> void:
