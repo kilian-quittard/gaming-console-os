@@ -97,6 +97,8 @@ var _wave_phase := 0.0
 var _scroll: ScrollContainer = null
 var _clock: Label = null
 var _name_label: Label = null
+var _brand_star: Control = null
+var _brand_label: Label = null
 var _arrow_left: Control = null
 var _arrow_right: Control = null
 var _scroll_tween: Tween = null
@@ -146,6 +148,26 @@ func _build_chrome() -> void:
 		lbl.add_theme_font_size_override("font_size", 34)
 		tabs.add_child(lbl)
 		_tab_labels.append(lbl)
+
+	# Top-center: brand logo (spark) + name
+	var brand := HBoxContainer.new()
+	brand.add_theme_constant_override("separation", 12)
+	brand.alignment = BoxContainer.ALIGNMENT_CENTER
+	brand.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	brand.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	brand.offset_top = 40
+	add_child(brand)
+	_brand_star = Control.new()
+	_brand_star.custom_minimum_size = Vector2(30, 30)
+	_brand_star.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_brand_star.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_brand_star.draw.connect(func() -> void: _draw_brand_star(_brand_star))
+	brand.add_child(_brand_star)
+	_brand_label = Label.new()
+	_brand_label.text = BRAND_NAME
+	_brand_label.add_theme_font_size_override("font_size", 28)
+	_brand_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	brand.add_child(_brand_label)
 
 	# Top-right: contextual toggle button — badge + label inside one rounded
 	# panel so it reads as a single cohesive button.
@@ -339,6 +361,18 @@ func _draw_waves(c: Control) -> void:
 		pts.append(Vector2(w, h))
 		pts.append(Vector2(0.0, h))
 		c.draw_colored_polygon(pts, L["col"])
+
+
+func _draw_brand_star(c: Control) -> void:
+	var ctr := c.size * 0.5
+	var outer := 15.0
+	var inner := 5.0
+	var pts := PackedVector2Array()
+	for i in 8:
+		var ang := deg_to_rad(-90.0 + i * 45.0)
+		var r := outer if i % 2 == 0 else inner
+		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
+	c.draw_colored_polygon(pts, Color(1, 1, 1))  # white; tinted via modulate per theme
 
 
 func _draw_spark(c: Control) -> void:
@@ -641,6 +675,10 @@ func _populate_mode(instant := false) -> void:
 	if _clock:
 		_clock.add_theme_color_override("font_color", ct)
 		_clock.modulate = Color(1, 1, 1, 0.85)
+	if _brand_label:
+		_brand_label.add_theme_color_override("font_color", ct)
+	if _brand_star:
+		_brand_star.modulate = ct
 
 	# Toggle button shows the OTHER mode
 	var other := 1 - _mode
