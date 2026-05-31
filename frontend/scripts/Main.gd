@@ -202,11 +202,16 @@ func _build_chrome() -> void:
 	_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_scroll.offset_top = 150
 	_scroll.offset_bottom = -96
+	_scroll.offset_left = 70
+	_scroll.offset_right = -70
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(_scroll)
 	_row = HBoxContainer.new()
-	_row.add_theme_constant_override("separation", 44)
+	_row.add_theme_constant_override("separation", 40)
+	# Fill the viewport so the row centers when it fits, scrolls when it overflows.
+	_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_scroll.add_child(_row)
 
 	# Bottom hints
@@ -478,7 +483,7 @@ func _tile_style(is_selected: bool, is_cartridge: bool) -> StyleBoxFlat:
 	sb.border_color = accent if is_selected else Color(accent, 0.4)
 	if is_selected:
 		sb.shadow_color = Color(accent, 0.35)
-		sb.shadow_size = 24
+		sb.shadow_size = 16
 	return sb
 
 
@@ -491,7 +496,7 @@ func _update_selection(instant := false) -> void:
 		tile.add_theme_stylebox_override("panel", _tile_style(on, is_cart))
 		tile.modulate = Color(1, 1, 1) if on else Color(0.82, 0.82, 0.86)
 
-		var target := Vector2(1.12, 1.12) if on else Vector2(0.96, 0.96)
+		var target := Vector2(1.08, 1.08) if on else Vector2(0.95, 0.95)
 		if instant:
 			tile.scale = target
 			continue
@@ -577,8 +582,8 @@ func _bounce(index: int) -> void:
 	if _tweens[index] != null and _tweens[index].is_valid():
 		_tweens[index].kill()
 	var tw := create_tween()
-	tw.tween_property(tile, "scale", Vector2(1.04, 1.04), 0.07)
-	tw.tween_property(tile, "scale", Vector2(1.12, 1.12), 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(tile, "scale", Vector2(1.02, 1.02), 0.07)
+	tw.tween_property(tile, "scale", Vector2(1.08, 1.08), 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_tweens[index] = tw
 
 
