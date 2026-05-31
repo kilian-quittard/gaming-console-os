@@ -39,10 +39,10 @@ var _mode := 0
 var _selected := 0
 var _cartridge_inserted := false
 
-# Screen-stack depth: home menu <-> detail overlay
-var _in_detail := false
-var _detail_layer: Control = null
-var _detail_item: Dictionary = {}
+# Screen-stack depth: home menu <-> preview overlay
+var _in_preview := false
+var _preview_layer: Control = null
+var _preview_item: Dictionary = {}
 var _tiles: Array[Panel] = []
 var _tweens: Array = []
 
@@ -134,7 +134,7 @@ func _build_chrome() -> void:
 
 	# Bottom hints
 	_status = Label.new()
-	_status.text = "‹ ›  Naviguer      A  Lancer      X  Mode      C  Cartouche (démo)"
+	_status.text = "‹ ›  Naviguer    A  Lancer    Y  Aperçu    X  Mode    C  Cartouche"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.add_theme_font_size_override("font_size", 22)
 	_status.modulate = Color(0.65, 0.62, 0.72)
@@ -320,7 +320,7 @@ func _populate_mode(instant := false) -> void:
 		_tweens.append(null)
 
 	_selected = 0
-	_status.text = "‹ ›  Naviguer      A  Lancer      X  Mode      C  Cartouche (démo)"
+	_status.text = "‹ ›  Naviguer    A  Lancer    Y  Aperçu    X  Mode    C  Cartouche"
 	_status.modulate = Color(0.65, 0.62, 0.72)
 	await get_tree().process_frame  # let layout settle so scale pivots are right
 	_update_selection(instant)
@@ -411,12 +411,12 @@ func _update_selection(instant := false) -> void:
 # ---- Input -----------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
-	# Detail overlay captures input while open.
-	if _in_detail:
+	# Preview overlay captures input while open: A launches, B closes.
+	if _in_preview:
 		if event.is_action_pressed("ui_cancel"):
-			_close_detail()
+			_close_preview()
 		elif event.is_action_pressed("ui_accept"):
-			_detail_accept()
+			_preview_launch()
 		return
 
 	if event.is_action_pressed("toggle_cartridge"):
@@ -438,12 +438,22 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed("ui_left"):
 		_selected = (_selected - 1 + _tiles.size()) % _tiles.size()
 		_update_selection()
+	elif event.is_action_pressed("preview"):
+		_preview_selected()
 	elif event.is_action_pressed("ui_accept"):
-		_activate(_selected)
+		_launch_selected()
 
 
-func _activate(index: int) -> void:
-	# Little press bounce, then open the detail screen for this tile.
+# Resolve the selected item (GAMING slot 0 may be the inserted cartridge game).
+func _resolve_item(index: int) -> Dictionary:
+	var item: Dictionary = CONTENT[_mode][index].duplicate(true)
+	if _mode == 0 and index == 0 and _cartridge_inserted:
+		item = CARTRIDGE_GAME.duplicate()
+		item["kind"] = "cartridge_in"
+	return item
+
+
+func _bounce(index: int) -> void:
 	var tile := _tiles[index]
 	if _tweens[index] != null and _tweens[index].is_valid():
 		_tweens[index].kill()
@@ -452,15 +462,30 @@ func _activate(index: int) -> void:
 	tw.tween_property(tile, "scale", Vector2(1.12, 1.12), 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_tweens[index] = tw
 
-	# Resolve the item (GAMING slot 0 may be the inserted cartridge game).
-	var item: Dictionary = CONTENT[_mode][index].duplicate(true)
-	if _mode == 0 and index == 0 and _cartridge_inserted:
-		item = CARTRIDGE_GAME.duplicate()
-		item["kind"] = "cartridge_in"
-	_open_detail(item)
+
+# A — launch directly (no detail hop).
+func _launch_selected() -> void:
+	_bounce(_selected)
+	var item := _resolve_item(_selected)
+	if _action_label(item) == "":
+		_status.text = "Insérez une cartouche"
+		_status.modulate = AMBER
+		return
+	_status.text = "→  %s  (lancement à câbler)" % item.title
+	_status.modulate = _icon_color(item.kind)
 
 
-# ---- Detail overlay --------------------------------------------------------
+# Y — open the media preview.
+func _preview_selected() -> void:
+	var item := _resolve_item(_selected)
+	if item.kind == "cartridge":
+		_status.text = "Insérez une cartouche"
+		_status.modulate = AMBER
+		return
+	_open_preview(item)
+
+
+# ---- Preview overlay (media) -----------------------------------------------
 
 func _desc_for(item: Dictionary) -> String:
 	match item.kind:
@@ -481,120 +506,187 @@ func _action_label(item: Dictionary) -> String:
 		_: return "Ouvrir"
 
 
-func _open_detail(item: Dictionary) -> void:
-	_in_detail = true
-	_detail_item = item
+func _hint_label(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 20)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.modulate = Color(0.65, 0.62, 0.72)
+	return l
+
+
+func _open_preview(item: Dictionary) -> void:
+	_in_preview = true
+	_preview_item = item
 	var accent: Color = _icon_color(item.kind)
 
-	_detail_layer = Control.new()
-	_detail_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_detail_layer.modulate = Color(1, 1, 1, 0)
-	add_child(_detail_layer)
+	_preview_layer = Control.new()
+	_preview_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_preview_layer.modulate = Color(1, 1, 1, 0)
+	add_child(_preview_layer)
 
 	var backdrop := ColorRect.new()
-	backdrop.color = Color(0.03, 0.03, 0.06, 0.82)
+	backdrop.color = Color(0.03, 0.03, 0.06, 0.85)
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_detail_layer.add_child(backdrop)
+	_preview_layer.add_child(backdrop)
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_detail_layer.add_child(center)
+	_preview_layer.add_child(center)
 
 	var card := PanelContainer.new()
 	var cs := StyleBoxFlat.new()
-	cs.bg_color = Color(0.13, 0.13, 0.19)
-	cs.set_corner_radius_all(28)
-	cs.content_margin_left = 56
-	cs.content_margin_right = 56
-	cs.content_margin_top = 44
-	cs.content_margin_bottom = 40
+	cs.bg_color = Color(0.12, 0.12, 0.18)
+	cs.set_corner_radius_all(24)
+	cs.content_margin_left = 40
+	cs.content_margin_right = 40
+	cs.content_margin_top = 30
+	cs.content_margin_bottom = 28
 	cs.set_border_width_all(3)
 	cs.border_color = accent
 	cs.shadow_color = Color(accent, 0.28)
-	cs.shadow_size = 30
+	cs.shadow_size = 26
 	card.add_theme_stylebox_override("panel", cs)
-	card.custom_minimum_size = Vector2(720, 0)
 	center.add_child(card)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 22)
+	vb.add_theme_constant_override("separation", 13)
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	card.add_child(vb)
 
-	var iw := CenterContainer.new()
-	vb.add_child(iw)
-	var is_cart: bool = item.kind == "cartridge" or item.kind == "cartridge_in"
-	var isz := Vector2(120, 160) if is_cart else Vector2(150, 150)
-	iw.add_child(_make_icon(item.kind, accent, isz))
+	# --- Media area: placeholder "trailer" (16:9) with play watermark ---
+	var media := Panel.new()
+	media.custom_minimum_size = Vector2(480, 210)
+	var msb := StyleBoxFlat.new()
+	msb.bg_color = Color(0.07, 0.07, 0.11)
+	msb.set_corner_radius_all(16)
+	media.add_theme_stylebox_override("panel", msb)
+	vb.add_child(media)
 
+	var ov := Control.new()
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ov.draw.connect(func() -> void:
+		var c := ov.size * 0.5
+		c.y -= 14.0
+		ov.draw_colored_polygon(PackedVector2Array([
+			c + Vector2(-22, -28), c + Vector2(-22, 28), c + Vector2(34, 0),
+		]), Color(1, 1, 1, 0.85))
+	)
+	media.add_child(ov)
+
+	var mlabel := Label.new()
+	mlabel.text = "Bande-annonce"
+	mlabel.add_theme_font_size_override("font_size", 16)
+	mlabel.modulate = Color(1, 1, 1, 0.55)
+	mlabel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	mlabel.offset_left = 18
+	mlabel.offset_top = -34
+	mlabel.offset_bottom = -10
+	media.add_child(mlabel)
+
+	# --- Thumbnail strip (placeholder screenshots), highlight auto-cycles ---
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 14)
+	strip.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(strip)
+	var thumbs: Array[Panel] = []
+	for i in 4:
+		var tp := Panel.new()
+		tp.custom_minimum_size = Vector2(96, 54)
+		var tsb := StyleBoxFlat.new()
+		tsb.bg_color = Color(accent, 0.16)
+		tsb.set_corner_radius_all(10)
+		tp.add_theme_stylebox_override("panel", tsb)
+		strip.add_child(tp)
+		thumbs.append(tp)
+
+	# Subtle "playing" motion: cycle the highlighted thumbnail.
+	var frame := [0]
+	var timer := Timer.new()
+	timer.wait_time = 0.9
+	timer.autostart = true
+	_preview_layer.add_child(timer)
+	timer.timeout.connect(func() -> void:
+		frame[0] = (frame[0] + 1) % thumbs.size()
+		for i in thumbs.size():
+			var t2 := StyleBoxFlat.new()
+			t2.set_corner_radius_all(10)
+			if i == frame[0]:
+				t2.bg_color = Color(accent, 0.5)
+				t2.set_border_width_all(2)
+				t2.border_color = accent
+			else:
+				t2.bg_color = Color(accent, 0.16)
+			thumbs[i].add_theme_stylebox_override("panel", t2)
+	)
+
+	# --- Title + description ---
 	var t := Label.new()
 	t.text = item.title
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	t.add_theme_font_size_override("font_size", 46)
+	t.add_theme_font_size_override("font_size", 36)
 	vb.add_child(t)
 
 	var d := Label.new()
 	d.text = _desc_for(item)
 	d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	d.add_theme_font_size_override("font_size", 22)
+	d.add_theme_font_size_override("font_size", 18)
 	d.modulate = Color(0.72, 0.70, 0.78)
-	d.custom_minimum_size.x = 620
+	d.custom_minimum_size.x = 460
 	vb.add_child(d)
 
+	# --- Play button ---
 	var al := _action_label(item)
 	if al != "":
-		var bw := CenterContainer.new()
-		vb.add_child(bw)
 		var btn := PanelContainer.new()
 		var bs := StyleBoxFlat.new()
 		bs.bg_color = accent
 		bs.set_corner_radius_all(14)
-		bs.content_margin_left = 40
-		bs.content_margin_right = 40
-		bs.content_margin_top = 14
-		bs.content_margin_bottom = 14
+		bs.content_margin_left = 38
+		bs.content_margin_right = 38
+		bs.content_margin_top = 11
+		bs.content_margin_bottom = 11
 		btn.add_theme_stylebox_override("panel", bs)
-		bw.add_child(btn)
+		btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var bl := Label.new()
 		bl.text = al
-		bl.add_theme_font_size_override("font_size", 28)
+		bl.add_theme_font_size_override("font_size", 24)
 		bl.add_theme_color_override("font_color", Color(0.08, 0.08, 0.12))
 		btn.add_child(bl)
+		vb.add_child(btn)
 
-	# Back hint
-	var hw := CenterContainer.new()
-	vb.add_child(hw)
+	# --- Hints: A launch, B back ---
 	var hint := HBoxContainer.new()
-	hint.add_theme_constant_override("separation", 10)
-	hw.add_child(hint)
+	hint.add_theme_constant_override("separation", 12)
+	hint.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(hint)
+	if al != "":
+		hint.add_child(_make_glyph_badge("A", Color(0.45, 0.80, 0.48)))
+		hint.add_child(_hint_label(al + "      "))
 	hint.add_child(_make_glyph_badge("B", Color(0.90, 0.36, 0.36)))
-	var hl := Label.new()
-	hl.text = "Retour"
-	hl.add_theme_font_size_override("font_size", 20)
-	hl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	hl.modulate = Color(0.65, 0.62, 0.72)
-	hint.add_child(hl)
+	hint.add_child(_hint_label("Retour"))
 
 	var tw := create_tween()
-	tw.tween_property(_detail_layer, "modulate:a", 1.0, 0.18)
+	tw.tween_property(_preview_layer, "modulate:a", 1.0, 0.18)
 
 
-func _detail_accept() -> void:
-	if _action_label(_detail_item) == "":
-		return  # nothing to launch (empty cartridge slot)
-	# Placeholder: real launch is the OS session layer's job (Phase 5).
-	_status.text = "→  %s  (lancement à câbler)" % _detail_item.title
-	_status.modulate = _icon_color(_detail_item.kind)
-	_close_detail()
-
-
-func _close_detail() -> void:
-	if _detail_layer == null:
+func _preview_launch() -> void:
+	if _action_label(_preview_item) == "":
 		return
-	var layer := _detail_layer
-	_detail_layer = null
-	_in_detail = false
+	# Placeholder: real launch is the OS session layer's job (Phase 5).
+	_status.text = "→  %s  (lancement à câbler)" % _preview_item.title
+	_status.modulate = _icon_color(_preview_item.kind)
+	_close_preview()
+
+
+func _close_preview() -> void:
+	if _preview_layer == null:
+		return
+	var layer := _preview_layer
+	_preview_layer = null
+	_in_preview = false
 	var tw := create_tween()
 	tw.tween_property(layer, "modulate:a", 0.0, 0.14)
 	tw.tween_callback(layer.queue_free)
