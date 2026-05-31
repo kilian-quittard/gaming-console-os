@@ -4,13 +4,29 @@ extends Control
 ## layer's job, kept out here so the front-end stays swappable).
 
 const MODE_NAMES := ["GAMING", "TRAVAIL"]
-const MODE_ACCENTS := [
-	Color(1.0, 0.45, 0.45),   # GAMING  — coral
-	Color(0.18, 0.82, 0.71),  # TRAVAIL — teal
+
+# A theme = a [gaming, travail] palette set (accent + bg gradient). Switchable
+# in Settings. Index 0 stays the original "Indie" look.
+var THEMES := [
+	{
+		"name": "Indie",
+		"accent": [Color(1.0, 0.45, 0.45), Color(0.18, 0.82, 0.71)],
+		"bg_top": [Color(0.21, 0.11, 0.21), Color(0.08, 0.14, 0.20)],
+		"bg_bottom": [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)],
+	},
+	{
+		"name": "Spark",  # brand: warm orange (gaming) + gold (travail)
+		"accent": [Color(1.0, 0.55, 0.16), Color(1.0, 0.80, 0.25)],
+		"bg_top": [Color(0.22, 0.12, 0.04), Color(0.20, 0.15, 0.05)],
+		"bg_bottom": [Color(0.10, 0.06, 0.03), Color(0.10, 0.08, 0.03)],
+	},
+	{
+		"name": "Ember",  # deeper warm: red-orange + amber gold
+		"accent": [Color(0.97, 0.36, 0.26), Color(1.0, 0.68, 0.30)],
+		"bg_top": [Color(0.18, 0.07, 0.07), Color(0.17, 0.11, 0.06)],
+		"bg_bottom": [Color(0.08, 0.04, 0.04), Color(0.09, 0.06, 0.04)],
+	},
 ]
-# GAMING = warm/energetic (plum→magenta).  TRAVAIL = cool/calm (blue-teal).
-const MODE_BG_TOP := [Color(0.21, 0.11, 0.21), Color(0.08, 0.14, 0.20)]
-const MODE_BG_BOTTOM := [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)]
 
 const AMBER := Color(1.0, 0.74, 0.28)
 const X_BLUE := Color(0.30, 0.55, 0.98)
@@ -45,11 +61,12 @@ const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "ga
 const BRAND_NAME := "SPARK"
 const BRAND_COLOR := Color(1.0, 0.55, 0.16)  # spark orange
 
-const SETTINGS_KINDS := ["volume", "bright", "wifi", "account"]
-const SETTINGS_LABELS := ["Volume", "Luminosité", "Wi-Fi", "Compte"]
+const SETTINGS_KINDS := ["theme", "volume", "bright", "wifi", "account"]
+const SETTINGS_LABELS := ["Thème", "Volume", "Luminosité", "Wi-Fi", "Compte"]
 const SETTINGS_ACCENT := Color(0.30, 0.55, 0.98)
 
 var _mode := 0
+var _theme := 1
 var _selected := 0
 var _cartridge_inserted := false
 
@@ -404,7 +421,7 @@ func _update_clock() -> void:
 
 func _draw_motif() -> void:
 	var sz := _motif.size
-	var col: Color = MODE_ACCENTS[_mode]
+	var col: Color = _accent(_mode)
 	col.a = 0.06
 	if _mode == 0:
 		# GAMING — diagonal energy lines
@@ -544,8 +561,8 @@ func _make_glyph_badge(letter: String, color: Color) -> Panel:
 func _populate_mode(instant := false) -> void:
 	# Background tint for this mode
 	var grad := Gradient.new()
-	grad.set_color(0, MODE_BG_TOP[_mode])
-	grad.set_color(1, MODE_BG_BOTTOM[_mode])
+	grad.set_color(0, _bg_top(_mode))
+	grad.set_color(1, _bg_bottom(_mode))
 	var tex := GradientTexture2D.new()
 	tex.gradient = grad
 	tex.fill_from = Vector2(0, 0)
@@ -603,11 +620,23 @@ func _size_tiles_to_fit() -> void:
 		tile.pivot_offset = Vector2(tw, TILE_SIZE.y) * 0.5
 
 
+func _accent(mode: int) -> Color:
+	return THEMES[_theme]["accent"][mode]
+
+
+func _bg_top(mode: int) -> Color:
+	return THEMES[_theme]["bg_top"][mode]
+
+
+func _bg_bottom(mode: int) -> Color:
+	return THEMES[_theme]["bg_bottom"][mode]
+
+
 func _icon_color(kind: String) -> Color:
 	match kind:
 		"cartridge", "cartridge_in": return AMBER
 		"store": return Color(0.55, 0.56, 0.64)
-		_: return MODE_ACCENTS[_mode]
+		_: return _accent(_mode)
 
 
 func _make_tile(item: Dictionary) -> Panel:
@@ -656,7 +685,7 @@ func _tile_style(is_selected: bool, is_cartridge: bool) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.20, 0.19, 0.27) if is_selected else Color(0.13, 0.13, 0.19)
 	sb.set_corner_radius_all(26)
-	var accent: Color = AMBER if is_cartridge else MODE_ACCENTS[_mode]
+	var accent: Color = AMBER if is_cartridge else _accent(_mode)
 	sb.set_border_width_all(5 if is_selected else (2 if is_cartridge else 0))
 	sb.border_color = accent if is_selected else Color(accent, 0.4)
 	if is_selected:
@@ -1128,6 +1157,10 @@ func _make_settings_row(i: int) -> PanelContainer:
 	hb.add_child(lbl)
 
 	match SETTINGS_KINDS[i]:
+		"theme":
+			var v := _value_label("‹ %s ›" % THEMES[_theme]["name"])
+			v.modulate = THEMES[_theme]["accent"][0]
+			hb.add_child(v)
 		"volume":
 			hb.add_child(_make_bar(_vol))
 			hb.add_child(_value_label("%d%%" % _vol))
@@ -1174,6 +1207,9 @@ func _make_bar(value: int) -> Control:
 
 func _settings_adjust(dir: int) -> void:
 	match SETTINGS_KINDS[_settings_sel]:
+		"theme":
+			_theme = (_theme + dir + THEMES.size()) % THEMES.size()
+			_populate_mode()  # re-apply palette to the live home behind
 		"volume": _vol = clampi(_vol + dir * 5, 0, 100)
 		"bright": _bright = clampi(_bright + dir * 5, 0, 100)
 		"wifi": _wifi = not _wifi
@@ -1181,9 +1217,11 @@ func _settings_adjust(dir: int) -> void:
 
 
 func _settings_activate() -> void:
-	if SETTINGS_KINDS[_settings_sel] == "wifi":
-		_wifi = not _wifi
-		_refresh_settings()
+	match SETTINGS_KINDS[_settings_sel]:
+		"theme": _settings_adjust(1)
+		"wifi":
+			_wifi = not _wifi
+			_refresh_settings()
 
 
 func _close_settings() -> void:
