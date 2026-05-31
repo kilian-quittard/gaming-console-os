@@ -19,7 +19,7 @@ cat > /usr/share/gaming-console-os-release <<'EOF'
 GAMING_CONSOLE_OS=1
 BRAND=SPARK
 BASE=bazzite-deck
-PHASE=3-frontend-in-image
+PHASE=3-gaming-session
 EOF
 
 # --- SPARK front-end (binary copied to /usr/lib/spark by the Containerfile) ---
@@ -43,6 +43,32 @@ Icon=applications-games
 Terminal=false
 Type=Application
 Categories=Game;
+EOF
+
+# --- SPARK gaming session: Gamescope wrapping the front-end + relaunch loop ---
+# Console behaviour: if the front-end (or a launched game) exits, relaunch it.
+# Nested test (from desktop): SPARK_GAMESCOPE_ARGS="-w 1280 -h 720" spark-session
+# System session (physical, real GPU): default "-f" fullscreen, selectable at login.
+cat > /usr/bin/spark-session <<'EOF'
+#!/bin/bash
+set -u
+GS_ARGS="${SPARK_GAMESCOPE_ARGS:- -f}"
+while true; do
+    gamescope ${GS_ARGS} -- /usr/bin/spark-frontend || true
+    sleep 1
+done
+EOF
+chmod 0755 /usr/bin/spark-session
+
+# Selectable Wayland session (NOT default — avoids black-screen on GPU-less VMs).
+mkdir -p /usr/share/wayland-sessions
+cat > /usr/share/wayland-sessions/spark-gaming.desktop <<'EOF'
+[Desktop Entry]
+Name=SPARK Gaming
+Comment=SPARK gaming session (Gamescope)
+Exec=/usr/bin/spark-session
+Type=Application
+DesktopNames=spark-gaming
 EOF
 
 # Use a COPR Example:
