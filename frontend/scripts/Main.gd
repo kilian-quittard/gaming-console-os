@@ -14,9 +14,10 @@ const MODE_BG_BOTTOM := [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)]
 
 const AMBER := Color(1.0, 0.74, 0.28)
 const X_BLUE := Color(0.30, 0.55, 0.98)
-const TILE_SIZE := Vector2(240, 300)
+const TILE_SIZE := Vector2(240, 268)
 const VISIBLE_TILES := 4   # how many tiles fill the row at once (rest scroll in)
 const ROW_SEP := 40
+const GUTTER := 40         # inner side padding so a hovered edge tile isn't clipped
 
 # Content per mode. kind drives the icon style. (All placeholders for now.)
 const CONTENT := [
@@ -66,6 +67,9 @@ var _wifi := true
 
 var _scroll: ScrollContainer = null
 var _clock: Label = null
+var _arrow_left: Control = null
+var _arrow_right: Control = null
+var _scroll_tween: Tween = null
 var _tiles: Array[Panel] = []
 var _tweens: Array = []
 
@@ -217,8 +221,25 @@ func _build_chrome() -> void:
 	_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	# Taller than a tile so the scaled selected tile stays centered (no top clip).
-	_row.custom_minimum_size.y = 360
+	_row.custom_minimum_size.y = 340
 	_scroll.add_child(_row)
+
+	# Scroll affordance arrows in the side margins (shown when more to explore).
+	_arrow_left = _make_arrow(true)
+	_arrow_left.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	_arrow_left.offset_left = 18
+	_arrow_left.offset_top = 185
+	_arrow_left.offset_bottom = -60
+	_arrow_left.custom_minimum_size = Vector2(34, 0)
+	add_child(_arrow_left)
+
+	_arrow_right = _make_arrow(false)
+	_arrow_right.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	_arrow_right.offset_right = -18
+	_arrow_right.offset_left = -52
+	_arrow_right.offset_top = 185
+	_arrow_right.offset_bottom = -60
+	add_child(_arrow_right)
 
 	# Bottom hints
 	_status = Label.new()
@@ -230,6 +251,36 @@ func _build_chrome() -> void:
 	_status.offset_top = -70
 	_status.offset_bottom = -34
 	add_child(_status)
+
+
+func _make_arrow(left: bool) -> Control:
+	var c := Control.new()
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.visible = false
+	c.draw.connect(func() -> void: _draw_arrow(c, left))
+	return c
+
+
+func _draw_arrow(c: Control, left: bool) -> void:
+	var cx := c.size.x * 0.5
+	var cy := c.size.y * 0.5
+	var w := 13.0
+	var h := 24.0
+	var col := Color(1, 1, 1, 0.55)
+	if left:
+		c.draw_colored_polygon(PackedVector2Array([
+			Vector2(cx + w * 0.5, cy - h * 0.5), Vector2(cx + w * 0.5, cy + h * 0.5), Vector2(cx - w * 0.5, cy),
+		]), col)
+	else:
+		c.draw_colored_polygon(PackedVector2Array([
+			Vector2(cx - w * 0.5, cy - h * 0.5), Vector2(cx - w * 0.5, cy + h * 0.5), Vector2(cx + w * 0.5, cy),
+		]), col)
+
+
+func _make_gutter() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(GUTTER, 0)
+	return c
 
 
 func _update_clock() -> void:
@@ -408,11 +459,13 @@ func _populate_mode(instant := false) -> void:
 	if _mode == 0 and _cartridge_inserted:
 		items[0] = CARTRIDGE_GAME.duplicate()
 		items[0]["kind"] = "cartridge_in"
+	_row.add_child(_make_gutter())  # leading padding so edge tile isn't clipped
 	for item in items:
 		var tile := _make_tile(item)
 		_row.add_child(tile)
 		_tiles.append(tile)
 		_tweens.append(null)
+	_row.add_child(_make_gutter())  # trailing padding
 	if _scroll:
 		_scroll.scroll_horizontal = 0
 
@@ -431,7 +484,7 @@ func _size_tiles_to_fit() -> void:
 	if _scroll == null or _tiles.is_empty():
 		return
 	var avail := _scroll.size.x
-	var tw := (avail - (VISIBLE_TILES - 1) * ROW_SEP) / float(VISIBLE_TILES)
+	var tw := (avail - 2 * GUTTER - (VISIBLE_TILES - 1) * ROW_SEP) / float(VISIBLE_TILES)
 	tw = maxf(tw, 160.0)
 	for tile in _tiles:
 		tile.custom_minimum_size.x = tw
@@ -520,9 +573,35 @@ func _update_selection(instant := false) -> void:
 		tw.tween_property(tile, "scale", target, 0.26)
 		_tweens[i] = tw
 
-	# Keep the selected tile in view when the row scrolls.
-	if _scroll and _selected < _tiles.size():
-		_scroll.ensure_control_visible(_tiles[_selected])
+	_update_scroll_and_arrows()
+
+
+# Scroll so the selected tile keeps a GUTTER margin from both edges (never
+# clipped when hovered/scaled), and toggle the left/right "more" arrows.
+func _update_scroll_and_arrows() -> void:
+	if _scroll == null or _selected >= _tiles.size():
+		return
+	var tile := _tiles[_selected]
+	var view_w := _scroll.size.x
+	var max_scroll := maxf(_row.size.x - view_w, 0.0)
+	var sx := float(_scroll.scroll_horizontal)
+	var tleft := tile.position.x
+	var tright := tile.position.x + tile.size.x
+	if tleft - GUTTER < sx:
+		sx = tleft - GUTTER
+	elif tright + GUTTER > sx + view_w:
+		sx = tright + GUTTER - view_w
+	sx = clampf(sx, 0.0, max_scroll)
+
+	if _scroll_tween and _scroll_tween.is_valid():
+		_scroll_tween.kill()
+	_scroll_tween = create_tween()
+	_scroll_tween.tween_property(_scroll, "scroll_horizontal", int(round(sx)), 0.18)
+
+	if _arrow_left:
+		_arrow_left.visible = sx > 1.0
+	if _arrow_right:
+		_arrow_right.visible = sx < max_scroll - 1.0
 
 
 # ---- Input -----------------------------------------------------------------
