@@ -42,6 +42,9 @@ const CONTENT := [
 # Demo "cartridge" the simulated slot reveals when "inserted" (key C / Y button).
 const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "game"}
 
+const BRAND_NAME := "SPARK"
+const BRAND_COLOR := Color(1.0, 0.55, 0.16)  # spark orange
+
 const SETTINGS_KINDS := ["volume", "bright", "wifi", "account"]
 const SETTINGS_LABELS := ["Volume", "Luminosité", "Wi-Fi", "Compte"]
 const SETTINGS_ACCENT := Color(0.30, 0.55, 0.98)
@@ -287,6 +290,21 @@ func _make_gutter() -> Control:
 	return c
 
 
+func _draw_spark(c: Control) -> void:
+	var ctr := c.size * 0.5
+	# soft glow
+	c.draw_circle(ctr, 46.0, Color(BRAND_COLOR, 0.16))
+	# 4-point star
+	var outer := 42.0
+	var inner := 13.0
+	var pts := PackedVector2Array()
+	for i in 8:
+		var ang := deg_to_rad(-90.0 + i * 45.0)
+		var r := outer if i % 2 == 0 else inner
+		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
+	c.draw_colored_polygon(pts, BRAND_COLOR)
+
+
 func _show_splash() -> void:
 	var layer := Control.new()
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -305,18 +323,26 @@ func _show_splash() -> void:
 	vb.add_theme_constant_override("separation", 16)
 	center.add_child(vb)
 
+	var spark := Control.new()
+	spark.custom_minimum_size = Vector2(96, 96)
+	spark.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	spark.modulate = Color(1, 1, 1, 0)
+	spark.draw.connect(func() -> void: _draw_spark(spark))
+	vb.add_child(spark)
+
 	var title := Label.new()
-	title.text = "GAMING CONSOLE"
+	title.text = BRAND_NAME
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 64)
+	title.add_theme_font_size_override("font_size", 72)
+	title.add_theme_constant_override("outline_size", 0)
 	title.modulate = Color(1, 1, 1, 0)
 	vb.add_child(title)
 
 	var sub := Label.new()
-	sub.text = "OS"
+	sub.text = "PLAY · CREATE"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", 26)
-	sub.modulate = Color(MODE_ACCENTS[0], 0.0)
+	sub.add_theme_font_size_override("font_size", 24)
+	sub.modulate = Color(BRAND_COLOR, 0.0)
 	vb.add_child(sub)
 
 	var barbg := Panel.new()
@@ -333,13 +359,14 @@ func _show_splash() -> void:
 	fill.anchor_bottom = 1.0
 	fill.anchor_right = 0.0
 	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = MODE_ACCENTS[0]
+	fsb.bg_color = BRAND_COLOR
 	fsb.set_corner_radius_all(4)
 	fill.add_theme_stylebox_override("panel", fsb)
 	barbg.add_child(fill)
 
 	var tw := create_tween()
-	tw.tween_property(title, "modulate:a", 1.0, 0.4)
+	tw.tween_property(spark, "modulate:a", 1.0, 0.4)
+	tw.parallel().tween_property(title, "modulate:a", 1.0, 0.4)
 	tw.parallel().tween_property(sub, "modulate:a", 1.0, 0.4)
 	tw.tween_property(fill, "anchor_right", 1.0, 0.85)
 	tw.tween_interval(0.2)
