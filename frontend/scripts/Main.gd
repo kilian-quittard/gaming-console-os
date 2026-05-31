@@ -20,8 +20,12 @@ const TILE_SIZE := Vector2(240, 300)
 const CONTENT := [
 	[ # GAMING
 		{"title": "CARTOUCHE", "sub": "Insérez une cartouche", "kind": "cartridge"},
-		{"title": "Jeu 1", "sub": "Digital", "kind": "game"},
-		{"title": "Jeu 2", "sub": "Digital", "kind": "game"},
+		{"title": "Pixel Racer", "sub": "Digital", "kind": "game"},
+		{"title": "Star Forge", "sub": "Digital", "kind": "game"},
+		{"title": "Cave Dive", "sub": "Digital", "kind": "game"},
+		{"title": "Neon Drift", "sub": "Digital", "kind": "game"},
+		{"title": "Loop Hero+", "sub": "Digital", "kind": "game"},
+		{"title": "Bit Brawl", "sub": "Digital", "kind": "game"},
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
 	],
 	[ # TRAVAIL
@@ -35,14 +39,31 @@ const CONTENT := [
 # Demo "cartridge" the simulated slot reveals when "inserted" (key C / Y button).
 const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "game"}
 
+const SETTINGS_KINDS := ["volume", "bright", "wifi", "account"]
+const SETTINGS_LABELS := ["Volume", "Luminosité", "Wi-Fi", "Compte"]
+const SETTINGS_ACCENT := Color(0.30, 0.55, 0.98)
+
 var _mode := 0
 var _selected := 0
 var _cartridge_inserted := false
 
-# Screen-stack depth: home menu <-> preview overlay
+# Screen-stack depth: home menu <-> preview/settings overlay
 var _in_preview := false
 var _preview_layer: Control = null
 var _preview_item: Dictionary = {}
+
+var _in_settings := false
+var _settings_layer: Control = null
+var _settings_sel := 0
+var _settings_rows: Array = []  # built in _open_settings
+
+# Settings state (placeholder values)
+var _vol := 70
+var _bright := 80
+var _wifi := true
+
+var _scroll: ScrollContainer = null
+var _clock: Label = null
 var _tiles: Array[Panel] = []
 var _tweens: Array = []
 
@@ -106,7 +127,7 @@ func _build_chrome() -> void:
 	toggle_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	toggle_panel.grow_vertical = Control.GROW_DIRECTION_END
 	toggle_panel.offset_right = -48
-	toggle_panel.offset_top = 50
+	toggle_panel.offset_top = 110
 	add_child(toggle_panel)
 
 	var thb := HBoxContainer.new()
@@ -122,19 +143,75 @@ func _build_chrome() -> void:
 	_toggle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	thb.add_child(_toggle_label)
 
-	# Center: content row
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.offset_top = 140
-	center.offset_bottom = -90
-	add_child(center)
+	# Top-right corner: status bar (avatar, name, clock, network)
+	var status_bar := HBoxContainer.new()
+	status_bar.add_theme_constant_override("separation", 16)
+	status_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	status_bar.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	status_bar.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	status_bar.offset_right = -48
+	status_bar.offset_top = 46
+	add_child(status_bar)
+
+	var avatar := Panel.new()
+	avatar.custom_minimum_size = Vector2(40, 40)
+	avatar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var asb := StyleBoxFlat.new()
+	asb.bg_color = X_BLUE
+	asb.set_corner_radius_all(20)
+	avatar.add_theme_stylebox_override("panel", asb)
+	var ai := Label.new()
+	ai.text = "K"
+	ai.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ai.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ai.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ai.add_theme_font_size_override("font_size", 20)
+	avatar.add_child(ai)
+	status_bar.add_child(avatar)
+
+	var nm := Label.new()
+	nm.text = "Joueur"
+	nm.add_theme_font_size_override("font_size", 22)
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	status_bar.add_child(nm)
+
+	_clock = Label.new()
+	_clock.add_theme_font_size_override("font_size", 24)
+	_clock.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_clock.modulate = Color(0.78, 0.76, 0.84)
+	status_bar.add_child(_clock)
+
+	var net := Panel.new()
+	net.custom_minimum_size = Vector2(14, 14)
+	net.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var nsb := StyleBoxFlat.new()
+	nsb.bg_color = Color(0.40, 0.82, 0.45)
+	nsb.set_corner_radius_all(7)
+	net.add_theme_stylebox_override("panel", nsb)
+	status_bar.add_child(net)
+
+	_update_clock()
+	var ctimer := Timer.new()
+	ctimer.wait_time = 10.0
+	ctimer.autostart = true
+	add_child(ctimer)
+	ctimer.timeout.connect(_update_clock)
+
+	# Center: horizontally-scrolling content row (scrollbar hidden)
+	_scroll = ScrollContainer.new()
+	_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_scroll.offset_top = 150
+	_scroll.offset_bottom = -96
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(_scroll)
 	_row = HBoxContainer.new()
 	_row.add_theme_constant_override("separation", 44)
-	center.add_child(_row)
+	_scroll.add_child(_row)
 
 	# Bottom hints
 	_status = Label.new()
-	_status.text = "‹ ›  Naviguer    A  Lancer    Y  Aperçu    X  Mode    C  Cartouche"
+	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.add_theme_font_size_override("font_size", 22)
 	_status.modulate = Color(0.65, 0.62, 0.72)
@@ -142,6 +219,13 @@ func _build_chrome() -> void:
 	_status.offset_top = -70
 	_status.offset_bottom = -34
 	add_child(_status)
+
+
+func _update_clock() -> void:
+	if _clock == null:
+		return
+	var t := Time.get_time_dict_from_system()
+	_clock.text = "%02d:%02d" % [t.hour, t.minute]
 
 
 func _draw_motif() -> void:
@@ -313,17 +397,27 @@ func _populate_mode(instant := false) -> void:
 	if _mode == 0 and _cartridge_inserted:
 		items[0] = CARTRIDGE_GAME.duplicate()
 		items[0]["kind"] = "cartridge_in"
+	_row.add_child(_make_spacer())  # leading padding
 	for item in items:
 		var tile := _make_tile(item)
 		_row.add_child(tile)
 		_tiles.append(tile)
 		_tweens.append(null)
+	_row.add_child(_make_spacer())  # trailing padding
+	if _scroll:
+		_scroll.scroll_horizontal = 0
 
 	_selected = 0
-	_status.text = "‹ ›  Naviguer    A  Lancer    Y  Aperçu    X  Mode    C  Cartouche"
+	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
 	_status.modulate = Color(0.65, 0.62, 0.72)
 	await get_tree().process_frame  # let layout settle so scale pivots are right
 	_update_selection(instant)
+
+
+func _make_spacer() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(26, 0)
+	return c
 
 
 func _icon_color(kind: String) -> Color:
@@ -337,6 +431,7 @@ func _make_tile(item: Dictionary) -> Panel:
 	var panel := Panel.new()
 	panel.custom_minimum_size = TILE_SIZE
 	panel.pivot_offset = TILE_SIZE * 0.5
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # stay centered in scroll band
 
 	var vb := VBoxContainer.new()
 	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -407,6 +502,10 @@ func _update_selection(instant := false) -> void:
 		tw.tween_property(tile, "scale", target, 0.26)
 		_tweens[i] = tw
 
+	# Keep the selected tile in view when the row scrolls.
+	if _scroll and _selected < _tiles.size():
+		_scroll.ensure_control_visible(_tiles[_selected])
+
 
 # ---- Input -----------------------------------------------------------------
 
@@ -419,7 +518,27 @@ func _input(event: InputEvent) -> void:
 			_preview_launch()
 		return
 
-	if event.is_action_pressed("toggle_cartridge"):
+	# Settings overlay: up/down navigate, left/right adjust, A toggle, B close.
+	if _in_settings:
+		if event.is_action_pressed("ui_cancel") or event.is_action_pressed("settings"):
+			_close_settings()
+		elif event.is_action_pressed("ui_down"):
+			_settings_sel = (_settings_sel + 1) % SETTINGS_KINDS.size()
+			_refresh_settings()
+		elif event.is_action_pressed("ui_up"):
+			_settings_sel = (_settings_sel - 1 + SETTINGS_KINDS.size()) % SETTINGS_KINDS.size()
+			_refresh_settings()
+		elif event.is_action_pressed("ui_right"):
+			_settings_adjust(1)
+		elif event.is_action_pressed("ui_left"):
+			_settings_adjust(-1)
+		elif event.is_action_pressed("ui_accept"):
+			_settings_activate()
+		return
+
+	if event.is_action_pressed("settings"):
+		_open_settings()
+	elif event.is_action_pressed("toggle_cartridge"):
 		_cartridge_inserted = not _cartridge_inserted
 		if _mode == 0:
 			_populate_mode()
@@ -687,6 +806,176 @@ func _close_preview() -> void:
 	var layer := _preview_layer
 	_preview_layer = null
 	_in_preview = false
+	var tw := create_tween()
+	tw.tween_property(layer, "modulate:a", 0.0, 0.14)
+	tw.tween_callback(layer.queue_free)
+
+
+# ---- Settings overlay ------------------------------------------------------
+
+func _open_settings() -> void:
+	_in_settings = true
+	_settings_sel = 0
+
+	_settings_layer = Control.new()
+	_settings_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_settings_layer.modulate = Color(1, 1, 1, 0)
+	add_child(_settings_layer)
+
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.03, 0.03, 0.06, 0.85)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_settings_layer.add_child(backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_settings_layer.add_child(center)
+
+	var card := PanelContainer.new()
+	var cs := StyleBoxFlat.new()
+	cs.bg_color = Color(0.12, 0.12, 0.18)
+	cs.set_corner_radius_all(24)
+	cs.content_margin_left = 44
+	cs.content_margin_right = 44
+	cs.content_margin_top = 34
+	cs.content_margin_bottom = 30
+	cs.set_border_width_all(3)
+	cs.border_color = SETTINGS_ACCENT
+	card.add_theme_stylebox_override("panel", cs)
+	center.add_child(card)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	card.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Réglages"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 36)
+	vb.add_child(title)
+
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 10)
+	rows.name = "rows"
+	vb.add_child(rows)
+
+	var hint := HBoxContainer.new()
+	hint.add_theme_constant_override("separation", 12)
+	hint.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(hint)
+	hint.add_child(_hint_label("‹ ›  Régler        "))
+	hint.add_child(_make_glyph_badge("B", Color(0.90, 0.36, 0.36)))
+	hint.add_child(_hint_label("Fermer"))
+
+	_refresh_settings()
+
+	var tw := create_tween()
+	tw.tween_property(_settings_layer, "modulate:a", 1.0, 0.18)
+
+
+func _refresh_settings() -> void:
+	if _settings_layer == null:
+		return
+	var rows := _settings_layer.find_child("rows", true, false) as VBoxContainer
+	if rows == null:
+		return
+	for c in rows.get_children():
+		c.queue_free()
+	for i in SETTINGS_KINDS.size():
+		rows.add_child(_make_settings_row(i))
+
+
+func _make_settings_row(i: int) -> PanelContainer:
+	var on := (i == _settings_sel)
+	var row := PanelContainer.new()
+	row.custom_minimum_size = Vector2(560, 0)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.18, 0.19, 0.27) if on else Color(0.10, 0.10, 0.15)
+	sb.set_corner_radius_all(12)
+	sb.content_margin_left = 20
+	sb.content_margin_right = 20
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 12
+	sb.set_border_width_all(2 if on else 0)
+	sb.border_color = SETTINGS_ACCENT
+	row.add_theme_stylebox_override("panel", sb)
+
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 16)
+	row.add_child(hb)
+
+	var lbl := Label.new()
+	lbl.text = SETTINGS_LABELS[i]
+	lbl.add_theme_font_size_override("font_size", 24)
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hb.add_child(lbl)
+
+	match SETTINGS_KINDS[i]:
+		"volume":
+			hb.add_child(_make_bar(_vol))
+			hb.add_child(_value_label("%d%%" % _vol))
+		"bright":
+			hb.add_child(_make_bar(_bright))
+			hb.add_child(_value_label("%d%%" % _bright))
+		"wifi":
+			var v := _value_label("Activé" if _wifi else "Désactivé")
+			v.modulate = Color(0.45, 0.82, 0.48) if _wifi else Color(0.7, 0.7, 0.75)
+			hb.add_child(v)
+		"account":
+			hb.add_child(_value_label("Joueur"))
+	return row
+
+
+func _value_label(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 22)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return l
+
+
+func _make_bar(value: int) -> Control:
+	var bg := Panel.new()
+	bg.custom_minimum_size = Vector2(180, 12)
+	bg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var bgs := StyleBoxFlat.new()
+	bgs.bg_color = Color(0.25, 0.25, 0.32)
+	bgs.set_corner_radius_all(6)
+	bg.add_theme_stylebox_override("panel", bgs)
+	var fill := Panel.new()
+	fill.anchor_left = 0.0
+	fill.anchor_top = 0.0
+	fill.anchor_bottom = 1.0
+	fill.anchor_right = clampf(value / 100.0, 0.0, 1.0)
+	var fs := StyleBoxFlat.new()
+	fs.bg_color = SETTINGS_ACCENT
+	fs.set_corner_radius_all(6)
+	fill.add_theme_stylebox_override("panel", fs)
+	bg.add_child(fill)
+	return bg
+
+
+func _settings_adjust(dir: int) -> void:
+	match SETTINGS_KINDS[_settings_sel]:
+		"volume": _vol = clampi(_vol + dir * 5, 0, 100)
+		"bright": _bright = clampi(_bright + dir * 5, 0, 100)
+		"wifi": _wifi = not _wifi
+	_refresh_settings()
+
+
+func _settings_activate() -> void:
+	if SETTINGS_KINDS[_settings_sel] == "wifi":
+		_wifi = not _wifi
+		_refresh_settings()
+
+
+func _close_settings() -> void:
+	if _settings_layer == null:
+		return
+	var layer := _settings_layer
+	_settings_layer = null
+	_in_settings = false
 	var tw := create_tween()
 	tw.tween_property(layer, "modulate:a", 0.0, 0.14)
 	tw.tween_callback(layer.queue_free)
