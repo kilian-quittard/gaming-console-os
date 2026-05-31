@@ -363,31 +363,37 @@ func _draw_waves(c: Control) -> void:
 		c.draw_colored_polygon(pts, L["col"])
 
 
+func _sparkle_points(ctr: Vector2, long: float, short: float, inner: float) -> PackedVector2Array:
+	# 16 vertices: long cardinal arms + short diagonal arms, concave dips between.
+	var pts := PackedVector2Array()
+	for i in 16:
+		var ang := deg_to_rad(-90.0 + i * 22.5)
+		var r: float
+		if i % 2 == 1:
+			r = inner
+		elif (i / 2) % 2 == 0:
+			r = long
+		else:
+			r = short
+		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
+	return pts
+
+
 func _draw_brand_star(c: Control) -> void:
 	var ctr := c.size * 0.5
-	var outer := 15.0
-	var inner := 5.0
-	var pts := PackedVector2Array()
-	for i in 8:
-		var ang := deg_to_rad(-90.0 + i * 45.0)
-		var r := outer if i % 2 == 0 else inner
-		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
-	c.draw_colored_polygon(pts, Color(1, 1, 1))  # white; tinted via modulate per theme
+	# white; tinted via modulate per theme
+	c.draw_colored_polygon(_sparkle_points(ctr, 15.0, 7.5, 2.6), Color(1, 1, 1))
+	# little secondary sparkle for flair
+	c.draw_colored_polygon(_sparkle_points(ctr + Vector2(12, -11), 5.0, 2.4, 0.9), Color(1, 1, 1, 0.85))
 
 
 func _draw_spark(c: Control) -> void:
 	var ctr := c.size * 0.5
 	# dark medallion so the spark pops on the bright splash
 	c.draw_circle(ctr, 54.0, Color(0.20, 0.08, 0.02, 0.92))
-	# 4-point star (bright gold)
-	var outer := 42.0
-	var inner := 13.0
-	var pts := PackedVector2Array()
-	for i in 8:
-		var ang := deg_to_rad(-90.0 + i * 45.0)
-		var r := outer if i % 2 == 0 else inner
-		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
-	c.draw_colored_polygon(pts, Color(1.0, 0.82, 0.28))
+	# main sparkle (bright gold) + small accent sparkle
+	c.draw_colored_polygon(_sparkle_points(ctr, 40.0, 19.0, 7.0), Color(1.0, 0.82, 0.28))
+	c.draw_colored_polygon(_sparkle_points(ctr + Vector2(26, -22), 11.0, 5.0, 2.0), Color(1.0, 0.90, 0.45))
 
 
 func _show_splash() -> void:
