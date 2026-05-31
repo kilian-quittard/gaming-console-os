@@ -15,10 +15,10 @@ var THEMES := [
 		"bg_bottom": [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)],
 	},
 	{
-		"name": "Spark",  # brand: warm orange (gaming) + gold (travail)
-		"accent": [Color(1.0, 0.55, 0.16), Color(1.0, 0.80, 0.25)],
-		"bg_top": [Color(0.22, 0.12, 0.04), Color(0.20, 0.15, 0.05)],
-		"bg_bottom": [Color(0.10, 0.06, 0.03), Color(0.10, 0.08, 0.03)],
+		"name": "Spark",  # brand: bright sunshine — warm orange (gaming) + gold (travail)
+		"accent": [Color(1.0, 0.62, 0.12), Color(1.0, 0.84, 0.22)],
+		"bg_top": [Color(0.62, 0.30, 0.08), Color(0.66, 0.46, 0.10)],
+		"bg_bottom": [Color(0.30, 0.13, 0.06), Color(0.32, 0.22, 0.07)],
 	},
 	{
 		"name": "Ember",  # deeper warm: red-orange + amber gold
