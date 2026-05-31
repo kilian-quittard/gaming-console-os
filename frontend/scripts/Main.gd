@@ -1054,10 +1054,93 @@ func _hint_label(text: String) -> Label:
 	return l
 
 
+func _star5_points(ctr: Vector2, r: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in 10:
+		var ang := deg_to_rad(-90.0 + i * 36.0)
+		var rr := r if i % 2 == 0 else r * 0.45
+		pts.append(ctr + Vector2(cos(ang), sin(ang)) * rr)
+	return pts
+
+
+func _make_rating(value: float) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(5 * 24, 22)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(func() -> void:
+		var gold := Color(1.0, 0.78, 0.20)
+		var empty := Color(0.55, 0.55, 0.60, 0.45)
+		for i in 5:
+			var ctr := Vector2(11 + i * 24, c.size.y * 0.5)
+			var col := empty
+			if i < int(floor(value)):
+				col = gold
+			elif value - i >= 0.5:
+				col = Color(1.0, 0.78, 0.20, 0.55)
+			c.draw_colored_polygon(_star5_points(ctr, 9.0), col)
+	)
+	return c
+
+
+func _make_comment(author: String, text: String, light: bool) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.93, 0.91, 0.87) if light else Color(0.16, 0.16, 0.22)
+	sb.set_corner_radius_all(14)
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 11
+	sb.content_margin_bottom = 11
+	card.add_theme_stylebox_override("panel", sb)
+
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 11)
+	card.add_child(hb)
+
+	var palette := [Color(1.0, 0.55, 0.30), Color(0.45, 0.70, 1.0), Color(0.55, 0.80, 0.50), Color(0.85, 0.55, 0.95)]
+	var av := Panel.new()
+	av.custom_minimum_size = Vector2(38, 38)
+	av.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var asb := StyleBoxFlat.new()
+	asb.bg_color = palette[abs(author.hash()) % palette.size()]
+	asb.set_corner_radius_all(19)
+	av.add_theme_stylebox_override("panel", asb)
+	var ai := Label.new()
+	ai.text = author.substr(0, 1).to_upper()
+	ai.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ai.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ai.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ai.add_theme_color_override("font_color", Color(1, 1, 1))
+	av.add_child(ai)
+	hb.add_child(av)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(col)
+	var nm := Label.new()
+	nm.text = author
+	nm.add_theme_font_size_override("font_size", 16)
+	nm.add_theme_color_override("font_color", Color(0.20, 0.16, 0.12) if light else Color(0.95, 0.93, 0.80))
+	col.add_child(nm)
+	var tx := Label.new()
+	tx.text = text
+	tx.add_theme_font_size_override("font_size", 17)
+	tx.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tx.add_theme_color_override("font_color", Color(0.30, 0.27, 0.30) if light else Color(0.80, 0.80, 0.85))
+	col.add_child(tx)
+	return card
+
+
 func _open_preview(item: Dictionary) -> void:
 	_in_preview = true
 	_preview_item = item
 	var accent: Color = _icon_color(item.kind)
+	var light := _light_tiles()
+	var is_game: bool = item.kind == "game" or item.kind == "cartridge_in"
+	var txt: Color = Color(0.14, 0.11, 0.10) if light else Color(0.95, 0.95, 0.97)
+	var muted: Color = Color(0.42, 0.40, 0.44) if light else Color(0.72, 0.70, 0.78)
 
 	_preview_layer = Control.new()
 	_preview_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1065,7 +1148,7 @@ func _open_preview(item: Dictionary) -> void:
 	add_child(_preview_layer)
 
 	var backdrop := ColorRect.new()
-	backdrop.color = Color(0.03, 0.03, 0.06, 0.85)
+	backdrop.color = Color(0.03, 0.03, 0.06, 0.78)
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_preview_layer.add_child(backdrop)
 
@@ -1075,72 +1158,105 @@ func _open_preview(item: Dictionary) -> void:
 
 	var card := PanelContainer.new()
 	var cs := StyleBoxFlat.new()
-	cs.bg_color = Color(0.12, 0.12, 0.18)
+	cs.bg_color = Color(0.97, 0.95, 0.92) if light else Color(0.12, 0.12, 0.18)
 	cs.set_corner_radius_all(24)
 	cs.content_margin_left = 40
 	cs.content_margin_right = 40
 	cs.content_margin_top = 30
-	cs.content_margin_bottom = 28
+	cs.content_margin_bottom = 26
 	cs.set_border_width_all(3)
 	cs.border_color = accent
-	cs.shadow_color = Color(accent, 0.28)
+	cs.shadow_color = Color(accent, 0.30)
 	cs.shadow_size = 26
 	card.add_theme_stylebox_override("panel", cs)
+	if is_game:
+		card.custom_minimum_size = Vector2(900, 0)
 	center.add_child(card)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 13)
+	vb.add_theme_constant_override("separation", 14)
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	card.add_child(vb)
 
-	# --- Media area: placeholder "trailer" (16:9) with play watermark ---
-	var media := Panel.new()
-	media.custom_minimum_size = Vector2(480, 210)
-	var msb := StyleBoxFlat.new()
-	msb.bg_color = Color(0.07, 0.07, 0.11)
-	msb.set_corner_radius_all(16)
-	media.add_theme_stylebox_override("panel", msb)
-	vb.add_child(media)
+	var al := _action_label(item)
 
+	if not is_game:
+		# Simple page for FORGE / apps / store: icon + title + desc + action.
+		var iw := CenterContainer.new()
+		vb.add_child(iw)
+		iw.add_child(_make_icon(item.kind, accent if not light else accent.darkened(0.18), Vector2(120, 120)))
+		var st := Label.new()
+		st.text = item.title
+		st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		st.add_theme_font_size_override("font_size", 38)
+		st.add_theme_color_override("font_color", txt)
+		vb.add_child(st)
+		var sd := Label.new()
+		sd.text = _desc_for(item)
+		sd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		sd.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sd.add_theme_font_size_override("font_size", 18)
+		sd.add_theme_color_override("font_color", muted)
+		sd.custom_minimum_size.x = 460
+		vb.add_child(sd)
+		if al != "":
+			vb.add_child(_make_play_button(al, accent))
+		vb.add_child(_make_preview_hints(al))
+		var tw0 := create_tween()
+		tw0.tween_property(_preview_layer, "modulate:a", 1.0, 0.18)
+		return
+
+	# --- Enriched game page: two columns ---
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 26)
+	vb.add_child(top)
+
+	# Left column: media + thumbnails
+	var leftc := VBoxContainer.new()
+	leftc.add_theme_constant_override("separation", 10)
+	top.add_child(leftc)
+
+	var media := Panel.new()
+	media.custom_minimum_size = Vector2(380, 214)
+	var msb := StyleBoxFlat.new()
+	msb.bg_color = Color(0.09, 0.08, 0.11)
+	msb.set_corner_radius_all(14)
+	media.add_theme_stylebox_override("panel", msb)
+	leftc.add_child(media)
 	var ov := Control.new()
 	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ov.draw.connect(func() -> void:
 		var c := ov.size * 0.5
-		c.y -= 14.0
+		c.y -= 12.0
 		ov.draw_colored_polygon(PackedVector2Array([
-			c + Vector2(-22, -28), c + Vector2(-22, 28), c + Vector2(34, 0),
+			c + Vector2(-20, -26), c + Vector2(-20, 26), c + Vector2(32, 0),
 		]), Color(1, 1, 1, 0.85))
 	)
 	media.add_child(ov)
-
 	var mlabel := Label.new()
 	mlabel.text = "Bande-annonce"
-	mlabel.add_theme_font_size_override("font_size", 16)
+	mlabel.add_theme_font_size_override("font_size", 15)
 	mlabel.modulate = Color(1, 1, 1, 0.55)
 	mlabel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	mlabel.offset_left = 18
-	mlabel.offset_top = -34
-	mlabel.offset_bottom = -10
+	mlabel.offset_left = 16
+	mlabel.offset_top = -30
+	mlabel.offset_bottom = -8
 	media.add_child(mlabel)
 
-	# --- Thumbnail strip (placeholder screenshots), highlight auto-cycles ---
 	var strip := HBoxContainer.new()
-	strip.add_theme_constant_override("separation", 14)
-	strip.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_child(strip)
+	strip.add_theme_constant_override("separation", 10)
+	leftc.add_child(strip)
 	var thumbs: Array[Panel] = []
 	for i in 4:
 		var tp := Panel.new()
-		tp.custom_minimum_size = Vector2(96, 54)
+		tp.custom_minimum_size = Vector2(86, 50)
 		var tsb := StyleBoxFlat.new()
-		tsb.bg_color = Color(accent, 0.16)
-		tsb.set_corner_radius_all(10)
+		tsb.bg_color = Color(accent, 0.22)
+		tsb.set_corner_radius_all(9)
 		tp.add_theme_stylebox_override("panel", tsb)
 		strip.add_child(tp)
 		thumbs.append(tp)
-
-	# Subtle "playing" motion: cycle the highlighted thumbnail.
 	var frame := [0]
 	var timer := Timer.new()
 	timer.wait_time = 0.9
@@ -1150,65 +1266,113 @@ func _open_preview(item: Dictionary) -> void:
 		frame[0] = (frame[0] + 1) % thumbs.size()
 		for i in thumbs.size():
 			var t2 := StyleBoxFlat.new()
-			t2.set_corner_radius_all(10)
+			t2.set_corner_radius_all(9)
 			if i == frame[0]:
-				t2.bg_color = Color(accent, 0.5)
+				t2.bg_color = Color(accent, 0.6)
 				t2.set_border_width_all(2)
 				t2.border_color = accent
 			else:
-				t2.bg_color = Color(accent, 0.16)
+				t2.bg_color = Color(accent, 0.22)
 			thumbs[i].add_theme_stylebox_override("panel", t2)
 	)
 
-	# --- Title + description ---
+	# Right column: title, rating, meta, desc, play
+	var rightc := VBoxContainer.new()
+	rightc.add_theme_constant_override("separation", 10)
+	rightc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(rightc)
+
 	var t := Label.new()
 	t.text = item.title
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.add_theme_font_size_override("font_size", 36)
-	vb.add_child(t)
+	t.add_theme_color_override("font_color", txt)
+	rightc.add_child(t)
+
+	var rating := 4.0 + float(abs(item.title.hash()) % 11) / 10.0  # 4.0–5.0
+	var rrow := HBoxContainer.new()
+	rrow.add_theme_constant_override("separation", 10)
+	rightc.add_child(rrow)
+	rrow.add_child(_make_rating(rating))
+	var rl := Label.new()
+	rl.text = "%.1f" % rating
+	rl.add_theme_font_size_override("font_size", 18)
+	rl.add_theme_color_override("font_color", muted)
+	rl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	rrow.add_child(rl)
+
+	var genres := ["Action", "Aventure", "Plateforme", "Rogue-lite", "Puzzle"]
+	var meta := Label.new()
+	meta.text = "Indé · %s   ·   %.1f Go" % [genres[abs(item.title.hash()) % genres.size()], 0.6 + float(abs(item.title.hash()) % 35) / 10.0]
+	meta.add_theme_font_size_override("font_size", 17)
+	meta.add_theme_color_override("font_color", muted)
+	rightc.add_child(meta)
 
 	var d := Label.new()
 	d.text = _desc_for(item)
-	d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	d.add_theme_font_size_override("font_size", 18)
-	d.modulate = Color(0.72, 0.70, 0.78)
-	d.custom_minimum_size.x = 460
-	vb.add_child(d)
+	d.add_theme_font_size_override("font_size", 17)
+	d.add_theme_color_override("font_color", muted)
+	d.custom_minimum_size.x = 360
+	d.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rightc.add_child(d)
 
-	# --- Play button ---
-	var al := _action_label(item)
 	if al != "":
-		var btn := PanelContainer.new()
-		var bs := StyleBoxFlat.new()
-		bs.bg_color = accent
-		bs.set_corner_radius_all(14)
-		bs.content_margin_left = 38
-		bs.content_margin_right = 38
-		bs.content_margin_top = 11
-		bs.content_margin_bottom = 11
-		btn.add_theme_stylebox_override("panel", bs)
-		btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		var bl := Label.new()
-		bl.text = al
-		bl.add_theme_font_size_override("font_size", 24)
-		bl.add_theme_color_override("font_color", Color(0.08, 0.08, 0.12))
-		btn.add_child(bl)
-		vb.add_child(btn)
+		rightc.add_child(_make_play_button(al, accent))
 
-	# --- Hints: A launch, B back ---
+	# --- Community comments (Miiverse-style) ---
+	var clabel := Label.new()
+	clabel.text = "✦  Communauté"
+	clabel.add_theme_font_size_override("font_size", 20)
+	clabel.add_theme_color_override("font_color", txt)
+	vb.add_child(clabel)
+
+	var comments := [
+		{"n": "Kiki", "t": "Le pixel art est magnifique, gros coup de cœur."},
+		{"n": "Léo", "t": "Boss final corsé mais super satisfaisant."},
+		{"n": "Mina", "t": "Mon indé de l'année, sans hésiter."},
+	]
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 14)
+	vb.add_child(crow)
+	for cm in comments:
+		crow.add_child(_make_comment(cm["n"], cm["t"], light))
+
+	vb.add_child(_make_preview_hints(al))
+
+	var tw := create_tween()
+	tw.tween_property(_preview_layer, "modulate:a", 1.0, 0.18)
+
+
+func _make_play_button(label: String, accent: Color) -> CenterContainer:
+	var wrap := CenterContainer.new()
+	var btn := PanelContainer.new()
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = accent
+	bs.set_corner_radius_all(14)
+	bs.content_margin_left = 40
+	bs.content_margin_right = 40
+	bs.content_margin_top = 11
+	bs.content_margin_bottom = 11
+	btn.add_theme_stylebox_override("panel", bs)
+	var bl := Label.new()
+	bl.text = label
+	bl.add_theme_font_size_override("font_size", 24)
+	bl.add_theme_color_override("font_color", Color(0.10, 0.08, 0.05))
+	btn.add_child(bl)
+	wrap.add_child(btn)
+	return wrap
+
+
+func _make_preview_hints(al: String) -> HBoxContainer:
 	var hint := HBoxContainer.new()
 	hint.add_theme_constant_override("separation", 12)
 	hint.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_child(hint)
 	if al != "":
 		hint.add_child(_make_glyph_badge("A", Color(0.45, 0.80, 0.48)))
 		hint.add_child(_hint_label(al + "      "))
 	hint.add_child(_make_glyph_badge("B", Color(0.90, 0.36, 0.36)))
 	hint.add_child(_hint_label("Retour"))
-
-	var tw := create_tween()
-	tw.tween_property(_preview_layer, "modulate:a", 1.0, 0.18)
+	return hint
 
 
 func _preview_launch() -> void:
