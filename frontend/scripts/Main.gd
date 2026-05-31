@@ -38,6 +38,11 @@ const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "ga
 var _mode := 0
 var _selected := 0
 var _cartridge_inserted := false
+
+# Screen-stack depth: home menu <-> detail overlay
+var _in_detail := false
+var _detail_layer: Control = null
+var _detail_item: Dictionary = {}
 var _tiles: Array[Panel] = []
 var _tweens: Array = []
 
@@ -406,6 +411,14 @@ func _update_selection(instant := false) -> void:
 # ---- Input -----------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
+	# Detail overlay captures input while open.
+	if _in_detail:
+		if event.is_action_pressed("ui_cancel"):
+			_close_detail()
+		elif event.is_action_pressed("ui_accept"):
+			_detail_accept()
+		return
+
 	if event.is_action_pressed("toggle_cartridge"):
 		_cartridge_inserted = not _cartridge_inserted
 		if _mode == 0:
@@ -430,13 +443,158 @@ func _input(event: InputEvent) -> void:
 
 
 func _activate(index: int) -> void:
-	var item: Dictionary = CONTENT[_mode][index]
-	_status.text = "→  %s" % item.title
-	_status.modulate = MODE_ACCENTS[_mode]
+	# Little press bounce, then open the detail screen for this tile.
 	var tile := _tiles[index]
 	if _tweens[index] != null and _tweens[index].is_valid():
 		_tweens[index].kill()
 	var tw := create_tween()
-	tw.tween_property(tile, "scale", Vector2(1.0, 1.0), 0.08)
-	tw.tween_property(tile, "scale", Vector2(1.12, 1.12), 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(tile, "scale", Vector2(1.04, 1.04), 0.07)
+	tw.tween_property(tile, "scale", Vector2(1.12, 1.12), 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_tweens[index] = tw
+
+	# Resolve the item (GAMING slot 0 may be the inserted cartridge game).
+	var item: Dictionary = CONTENT[_mode][index].duplicate(true)
+	if _mode == 0 and index == 0 and _cartridge_inserted:
+		item = CARTRIDGE_GAME.duplicate()
+		item["kind"] = "cartridge_in"
+	_open_detail(item)
+
+
+# ---- Detail overlay --------------------------------------------------------
+
+func _desc_for(item: Dictionary) -> String:
+	match item.kind:
+		"cartridge": return "Insérez une cartouche dans la fente pour révéler et lancer le jeu (plug & play)."
+		"cartridge_in", "game": return "Jeu indé. Appuyez sur Jouer pour lancer."
+		"forge": return "Ouvre l'éditeur Godot pour créer tes propres jeux."
+		"pixel": return "Éditeur de pixel art pour tes sprites et tilesets."
+		"web": return "Navigateur en mode kiosque pour la documentation."
+		"store": return "Parcours le catalogue indé et l'abonnement."
+		_: return ""
+
+
+func _action_label(item: Dictionary) -> String:
+	match item.kind:
+		"cartridge": return ""  # nothing to launch on an empty slot
+		"game", "cartridge_in": return "Jouer"
+		"store": return "Voir le catalogue"
+		_: return "Ouvrir"
+
+
+func _open_detail(item: Dictionary) -> void:
+	_in_detail = true
+	_detail_item = item
+	var accent: Color = _icon_color(item.kind)
+
+	_detail_layer = Control.new()
+	_detail_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_detail_layer.modulate = Color(1, 1, 1, 0)
+	add_child(_detail_layer)
+
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.03, 0.03, 0.06, 0.82)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_detail_layer.add_child(backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_detail_layer.add_child(center)
+
+	var card := PanelContainer.new()
+	var cs := StyleBoxFlat.new()
+	cs.bg_color = Color(0.13, 0.13, 0.19)
+	cs.set_corner_radius_all(28)
+	cs.content_margin_left = 56
+	cs.content_margin_right = 56
+	cs.content_margin_top = 44
+	cs.content_margin_bottom = 40
+	cs.set_border_width_all(3)
+	cs.border_color = accent
+	cs.shadow_color = Color(accent, 0.28)
+	cs.shadow_size = 30
+	card.add_theme_stylebox_override("panel", cs)
+	card.custom_minimum_size = Vector2(720, 0)
+	center.add_child(card)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 22)
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(vb)
+
+	var iw := CenterContainer.new()
+	vb.add_child(iw)
+	var is_cart: bool = item.kind == "cartridge" or item.kind == "cartridge_in"
+	var isz := Vector2(120, 160) if is_cart else Vector2(150, 150)
+	iw.add_child(_make_icon(item.kind, accent, isz))
+
+	var t := Label.new()
+	t.text = item.title
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 46)
+	vb.add_child(t)
+
+	var d := Label.new()
+	d.text = _desc_for(item)
+	d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	d.add_theme_font_size_override("font_size", 22)
+	d.modulate = Color(0.72, 0.70, 0.78)
+	d.custom_minimum_size.x = 620
+	vb.add_child(d)
+
+	var al := _action_label(item)
+	if al != "":
+		var bw := CenterContainer.new()
+		vb.add_child(bw)
+		var btn := PanelContainer.new()
+		var bs := StyleBoxFlat.new()
+		bs.bg_color = accent
+		bs.set_corner_radius_all(14)
+		bs.content_margin_left = 40
+		bs.content_margin_right = 40
+		bs.content_margin_top = 14
+		bs.content_margin_bottom = 14
+		btn.add_theme_stylebox_override("panel", bs)
+		bw.add_child(btn)
+		var bl := Label.new()
+		bl.text = al
+		bl.add_theme_font_size_override("font_size", 28)
+		bl.add_theme_color_override("font_color", Color(0.08, 0.08, 0.12))
+		btn.add_child(bl)
+
+	# Back hint
+	var hw := CenterContainer.new()
+	vb.add_child(hw)
+	var hint := HBoxContainer.new()
+	hint.add_theme_constant_override("separation", 10)
+	hw.add_child(hint)
+	hint.add_child(_make_glyph_badge("B", Color(0.90, 0.36, 0.36)))
+	var hl := Label.new()
+	hl.text = "Retour"
+	hl.add_theme_font_size_override("font_size", 20)
+	hl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hl.modulate = Color(0.65, 0.62, 0.72)
+	hint.add_child(hl)
+
+	var tw := create_tween()
+	tw.tween_property(_detail_layer, "modulate:a", 1.0, 0.18)
+
+
+func _detail_accept() -> void:
+	if _action_label(_detail_item) == "":
+		return  # nothing to launch (empty cartridge slot)
+	# Placeholder: real launch is the OS session layer's job (Phase 5).
+	_status.text = "→  %s  (lancement à câbler)" % _detail_item.title
+	_status.modulate = _icon_color(_detail_item.kind)
+	_close_detail()
+
+
+func _close_detail() -> void:
+	if _detail_layer == null:
+		return
+	var layer := _detail_layer
+	_detail_layer = null
+	_in_detail = false
+	var tw := create_tween()
+	tw.tween_property(layer, "modulate:a", 0.0, 0.14)
+	tw.tween_callback(layer.queue_free)
