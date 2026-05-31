@@ -26,14 +26,18 @@ const CONTENT := [
 	],
 	[ # TRAVAIL
 		{"title": "FORGE", "sub": "Godot", "kind": "forge"},
-		{"title": "Pixel Art", "sub": "Éditeur", "kind": "app"},
-		{"title": "Docs Web", "sub": "Navigateur", "kind": "app"},
+		{"title": "Pixel Art", "sub": "Éditeur", "kind": "pixel"},
+		{"title": "Docs Web", "sub": "Navigateur", "kind": "web"},
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
 	],
 ]
 
+# Demo "cartridge" the simulated slot reveals when "inserted" (key C / Y button).
+const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "game"}
+
 var _mode := 0
 var _selected := 0
+var _cartridge_inserted := false
 var _tiles: Array[Panel] = []
 var _tweens: Array = []
 
@@ -108,7 +112,7 @@ func _build_chrome() -> void:
 
 	# Bottom hints
 	_status = Label.new()
-	_status.text = "‹  ›   Naviguer        A   Lancer"
+	_status.text = "‹ ›  Naviguer      A  Lancer      X  Mode      C  Cartouche (démo)"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.add_theme_font_size_override("font_size", 22)
 	_status.modulate = Color(0.65, 0.62, 0.72)
@@ -140,6 +144,102 @@ func _draw_motif() -> void:
 		while gy < sz.y:
 			_motif.draw_line(Vector2(0, gy), Vector2(sz.x, gy), col, 1.5)
 			gy += step
+
+
+func _make_icon(kind: String, color: Color, sz: Vector2) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = sz
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(func(): _draw_icon(c, kind, color))
+	return c
+
+
+func _draw_icon(c: Control, kind: String, color: Color) -> void:
+	match kind:
+		"game": _draw_play(c, color)
+		"cartridge": _draw_cartridge(c, color, false)
+		"cartridge_in": _draw_cartridge(c, color, true)
+		"forge": _draw_anvil(c, color)
+		"pixel": _draw_pixel(c, color)
+		"web": _draw_web(c, color)
+		"store": _draw_plus(c, color)
+		_: _draw_play(c, color)
+
+
+func _draw_play(c: Control, color: Color) -> void:
+	var s := c.size
+	var ctr := s * 0.5
+	var w := s.x * 0.28
+	var h := s.y * 0.34
+	c.draw_colored_polygon(PackedVector2Array([
+		ctr + Vector2(-w * 0.7, -h), ctr + Vector2(-w * 0.7, h), ctr + Vector2(w * 1.1, 0.0),
+	]), color)
+
+
+func _draw_cartridge(c: Control, color: Color, filled: bool) -> void:
+	var s := c.size
+	var p := Vector2(s.x * 0.12, s.y * 0.06)
+	var body := Rect2(p, s - p * 2.0)
+	if filled:
+		c.draw_rect(body, color, true)
+		var band := Rect2(body.position + Vector2(body.size.x * 0.15, body.size.y * 0.16),
+			Vector2(body.size.x * 0.7, body.size.y * 0.26))
+		c.draw_rect(band, color.darkened(0.45), true)
+		var pin_y := body.position.y + body.size.y * 0.82
+		for i in 4:
+			var px := body.position.x + body.size.x * (0.22 + i * 0.18)
+			c.draw_rect(Rect2(px, pin_y, body.size.x * 0.10, body.size.y * 0.12), color.darkened(0.45), true)
+	else:
+		c.draw_rect(body, color, false, 3.0)
+		var slot := Rect2(body.position + Vector2(body.size.x * 0.28, body.size.y * 0.2),
+			Vector2(body.size.x * 0.44, body.size.y * 0.10))
+		c.draw_rect(slot, color, false, 2.0)
+
+
+func _draw_anvil(c: Control, color: Color) -> void:
+	var s := c.size
+	c.draw_colored_polygon(PackedVector2Array([
+		Vector2(s.x * 0.16, s.y * 0.34), Vector2(s.x * 0.86, s.y * 0.34),
+		Vector2(s.x * 0.72, s.y * 0.52), Vector2(s.x * 0.30, s.y * 0.52),
+	]), color)
+	c.draw_colored_polygon(PackedVector2Array([
+		Vector2(s.x * 0.16, s.y * 0.34), Vector2(s.x * 0.04, s.y * 0.42), Vector2(s.x * 0.16, s.y * 0.46),
+	]), color)
+	c.draw_rect(Rect2(s.x * 0.42, s.y * 0.52, s.x * 0.16, s.y * 0.20), color, true)
+	c.draw_rect(Rect2(s.x * 0.28, s.y * 0.72, s.x * 0.44, s.y * 0.12), color, true)
+
+
+func _draw_pixel(c: Control, color: Color) -> void:
+	var s := c.size
+	var n := 3
+	var gap := s.x * 0.09
+	var cell := (s.x - gap * (n + 1)) / n
+	var on := [true, false, true, false, true, false, true, false, true]
+	for r in n:
+		for col in n:
+			var pos := Vector2(gap + (cell + gap) * col, gap + (cell + gap) * r)
+			var cc := color if on[r * n + col] else color.darkened(0.55)
+			c.draw_rect(Rect2(pos, Vector2(cell, cell)), cc, true)
+
+
+func _draw_web(c: Control, color: Color) -> void:
+	var s := c.size
+	var ctr := s * 0.5
+	var r := minf(s.x, s.y) * 0.42
+	c.draw_arc(ctr, r, 0.0, TAU, 48, color, 3.0)
+	c.draw_line(ctr + Vector2(-r, 0), ctr + Vector2(r, 0), color, 2.0)
+	c.draw_line(ctr + Vector2(0, -r), ctr + Vector2(0, r), color, 2.0)
+	c.draw_line(ctr + Vector2(-r * 0.85, -r * 0.5), ctr + Vector2(r * 0.85, -r * 0.5), color, 1.5)
+	c.draw_line(ctr + Vector2(-r * 0.85, r * 0.5), ctr + Vector2(r * 0.85, r * 0.5), color, 1.5)
+
+
+func _draw_plus(c: Control, color: Color) -> void:
+	var s := c.size
+	var ctr := s * 0.5
+	var ln := minf(s.x, s.y) * 0.5
+	var th := ln * 0.22
+	c.draw_rect(Rect2(ctr.x - th * 0.5, ctr.y - ln * 0.5, th, ln), color, true)
+	c.draw_rect(Rect2(ctr.x - ln * 0.5, ctr.y - th * 0.5, ln, th), color, true)
 
 
 func _make_glyph_badge(letter: String, color: Color) -> Panel:
@@ -186,7 +286,11 @@ func _populate_mode(instant := false) -> void:
 		c.queue_free()
 	_tiles.clear()
 	_tweens.clear()
-	var items: Array = CONTENT[_mode]
+	var items: Array = CONTENT[_mode].duplicate(true)
+	# GAMING slot 0 reveals the inserted cartridge game (plug & play demo).
+	if _mode == 0 and _cartridge_inserted:
+		items[0] = CARTRIDGE_GAME.duplicate()
+		items[0]["kind"] = "cartridge_in"
 	for item in items:
 		var tile := _make_tile(item)
 		_row.add_child(tile)
@@ -194,7 +298,7 @@ func _populate_mode(instant := false) -> void:
 		_tweens.append(null)
 
 	_selected = 0
-	_status.text = "‹  ›   Naviguer        A   Lancer"
+	_status.text = "‹ ›  Naviguer      A  Lancer      X  Mode      C  Cartouche (démo)"
 	_status.modulate = Color(0.65, 0.62, 0.72)
 	await get_tree().process_frame  # let layout settle so scale pivots are right
 	_update_selection(instant)
@@ -202,8 +306,8 @@ func _populate_mode(instant := false) -> void:
 
 func _icon_color(kind: String) -> Color:
 	match kind:
-		"cartridge": return AMBER
-		"store": return Color(0.45, 0.46, 0.55)
+		"cartridge", "cartridge_in": return AMBER
+		"store": return Color(0.55, 0.56, 0.64)
 		_: return MODE_ACCENTS[_mode]
 
 
@@ -220,24 +324,17 @@ func _make_tile(item: Dictionary) -> Panel:
 
 	var icon_wrap := CenterContainer.new()
 	vb.add_child(icon_wrap)
-	var icon := Panel.new()
-	# Cartridge icon is tall (cartridge-shaped); others are square-ish
-	icon.custom_minimum_size = Vector2(70, 96) if item.kind == "cartridge" else Vector2(92, 92)
-	var istyle := StyleBoxFlat.new()
-	istyle.bg_color = _icon_color(item.kind)
-	istyle.set_corner_radius_all(14)
-	if item.kind == "store":
-		# hollow look for the "+" store tile
-		istyle.bg_color = Color(0.16, 0.16, 0.22)
-		istyle.set_border_width_all(3)
-		istyle.border_color = Color(0.45, 0.46, 0.55)
-	icon.add_theme_stylebox_override("panel", istyle)
+	var is_cart_kind: bool = item.kind == "cartridge" or item.kind == "cartridge_in"
+	var isz := Vector2(74, 98) if is_cart_kind else Vector2(96, 96)
+	var icon := _make_icon(item.kind, _icon_color(item.kind), isz)
 	icon_wrap.add_child(icon)
 
 	var t := Label.new()
 	t.text = item.title
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.add_theme_font_size_override("font_size", 30)
+	t.clip_text = true
+	t.custom_minimum_size.x = TILE_SIZE.x - 24
 	vb.add_child(t)
 
 	var s := Label.new()
@@ -268,7 +365,8 @@ func _update_selection(instant := false) -> void:
 	for i in _tiles.size():
 		var tile := _tiles[i]
 		var on := (i == _selected)
-		var is_cart: bool = tile.get_meta("kind") == "cartridge"
+		var k: String = tile.get_meta("kind")
+		var is_cart: bool = k == "cartridge" or k == "cartridge_in"
 		tile.add_theme_stylebox_override("panel", _tile_style(on, is_cart))
 		tile.modulate = Color(1, 1, 1) if on else Color(0.82, 0.82, 0.86)
 
@@ -287,7 +385,17 @@ func _update_selection(instant := false) -> void:
 # ---- Input -----------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
-	if event.is_action_pressed("toggle_mode"):
+	if event.is_action_pressed("toggle_cartridge"):
+		_cartridge_inserted = not _cartridge_inserted
+		if _mode == 0:
+			_populate_mode()
+		if _cartridge_inserted:
+			_status.text = "Cartouche détectée : %s" % CARTRIDGE_GAME.title
+			_status.modulate = AMBER
+		else:
+			_status.text = "Cartouche retirée"
+			_status.modulate = Color(0.65, 0.62, 0.72)
+	elif event.is_action_pressed("toggle_mode"):
 		_mode = 1 - _mode
 		_populate_mode()
 	elif event.is_action_pressed("ui_right"):
