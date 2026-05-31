@@ -12,14 +12,37 @@ set -ouex pipefail
 # this installs a package from fedora repos
 dnf5 install -y tmux
 
-# --- Gaming console marker (Phase 2 pipeline test) ---
-# Proof that a rebased device is running OUR image and not stock bazzite-deck.
+# --- SPARK OS marker ---
 # Verify after rebase with: cat /usr/share/gaming-console-os-release
 mkdir -p /usr/share
 cat > /usr/share/gaming-console-os-release <<'EOF'
 GAMING_CONSOLE_OS=1
+BRAND=SPARK
 BASE=bazzite-deck
-PHASE=2-pipeline-bringup
+PHASE=3-frontend-in-image
+EOF
+
+# --- SPARK front-end (binary copied to /usr/lib/spark by the Containerfile) ---
+chmod 0755 /usr/lib/spark/spark-frontend
+
+# Launcher on PATH
+cat > /usr/bin/spark-frontend <<'EOF'
+#!/bin/bash
+exec /usr/lib/spark/spark-frontend "$@"
+EOF
+chmod 0755 /usr/bin/spark-frontend
+
+# Desktop entry so it shows up in desktop mode (launch/test before the
+# Gamescope kiosk session is wired in a later phase)
+cat > /usr/share/applications/spark-frontend.desktop <<'EOF'
+[Desktop Entry]
+Name=SPARK
+Comment=SPARK console front-end
+Exec=/usr/bin/spark-frontend
+Icon=applications-games
+Terminal=false
+Type=Application
+Categories=Game;
 EOF
 
 # Use a COPR Example:

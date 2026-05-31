@@ -2,41 +2,47 @@
 FROM scratch AS ctx
 COPY build_files /
 
+# --- Export the SPARK Godot front-end to a self-contained Linux binary ---
+# Done in a throwaway stage so neither Godot nor the templates land in the image.
+FROM registry.fedoraproject.org/fedora:41 AS godot
+RUN dnf install -y --setopt=install_weak_deps=False \
+        unzip wget \
+        mesa-libGL libX11 libXcursor libXrandr libXi libXinerama \
+        libxkbcommon fontconfig freetype \
+    && dnf clean all
+WORKDIR /work
+# Godot editor binary (used headless to export)
+RUN wget -q "https://github.com/godotengine/godot/releases/download/4.6-stable/Godot_v4.6-stable_linux.x86_64.zip" \
+    && unzip -q Godot_v4.6-stable_linux.x86_64.zip \
+    && mv Godot_v4.6-stable_linux.x86_64 /usr/local/bin/godot \
+    && chmod +x /usr/local/bin/godot
+# Matching export templates
+RUN wget -q "https://github.com/godotengine/godot/releases/download/4.6-stable/Godot_v4.6-stable_export_templates.tpz" \
+    && mkdir -p /root/.local/share/godot/export_templates/4.6.stable \
+    && unzip -q Godot_v4.6-stable_export_templates.tpz \
+    && mv templates/* /root/.local/share/godot/export_templates/4.6.stable/
+COPY frontend /work/frontend
+RUN mkdir -p /out \
+    && cd /work/frontend \
+    && (godot --headless --import . || true) \
+    && godot --headless --export-release "Linux" /out/spark-frontend.x86_64 \
+    && test -f /out/spark-frontend.x86_64
+
 # Base Image
 # Gaming console base: bazzite-deck boots straight into Gamescope gaming mode.
 FROM ghcr.io/ublue-os/bazzite-deck:stable
 
-## Other possible base images include:
-# FROM ghcr.io/ublue-os/bazzite:stable        # desktop variant
-# FROM ghcr.io/ublue-os/bazzite-deck:latest
-# FROM ghcr.io/ublue-os/bluefin-nvidia:stable
-# 
-# ... and so on, here are more base images
-# Universal Blue Images: https://github.com/orgs/ublue-os/packages
-# Fedora base image: quay.io/fedora/fedora-bootc:41
-# CentOS base images: quay.io/centos-bootc/centos-bootc:stream10
-
-### [IM]MUTABLE /opt
-## Some bootable images, like Fedora, have /opt symlinked to /var/opt, in order to
-## make it mutable/writable for users. However, some packages write files to this directory,
-## thus its contents might be wiped out when bootc deploys an image, making it troublesome for
-## some packages. Eg, google-chrome, docker-desktop.
-##
-## Uncomment the following line if one desires to make /opt immutable and be able to be used
-## by the package manager.
-
-# RUN rm /opt && mkdir /opt
+# Ship the exported front-end binary into the image.
+COPY --from=godot /out/spark-frontend.x86_64 /usr/lib/spark/spark-frontend
 
 ### MODIFICATIONS
-## make modifications desired in your image and install packages by modifying the build.sh script
-## the following RUN directive does all the things required to run "build.sh" as recommended.
-
+## Everything else (launcher, desktop entry, marker, packages) is done in build.sh.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build.sh
-    
+
 ### LINTING
 ## Verify final image and contents are correct.
 RUN bootc container lint
