@@ -92,6 +92,8 @@ var _bright := 80
 var _wifi := true
 
 var _booting := true
+var _wave_node: Control = null
+var _wave_phase := 0.0
 var _scroll: ScrollContainer = null
 var _clock: Label = null
 var _name_label: Label = null
@@ -314,6 +316,31 @@ func _make_gutter() -> Control:
 	return c
 
 
+func _process(delta: float) -> void:
+	if _wave_node != null and is_instance_valid(_wave_node):
+		_wave_phase += delta * 1.7
+		_wave_node.queue_redraw()
+
+
+func _draw_waves(c: Control) -> void:
+	var w := c.size.x
+	var h := c.size.y
+	var layers := [
+		{"base": h * 0.66, "amp": 36.0, "freq": 0.0055, "sp": 0.6, "col": Color(1.0, 0.84, 0.22, 0.28)},
+		{"base": h * 0.74, "amp": 30.0, "freq": 0.0075, "sp": 0.95, "col": Color(1.0, 0.55, 0.12, 0.38)},
+		{"base": h * 0.82, "amp": 24.0, "freq": 0.0105, "sp": 1.35, "col": Color(0.96, 0.36, 0.10, 0.55)},
+	]
+	for L in layers:
+		var pts := PackedVector2Array()
+		var x := 0.0
+		while x <= w:
+			pts.append(Vector2(x, L["base"] + sin(x * L["freq"] + _wave_phase * L["sp"]) * L["amp"]))
+			x += 14.0
+		pts.append(Vector2(w, h))
+		pts.append(Vector2(0.0, h))
+		c.draw_colored_polygon(pts, L["col"])
+
+
 func _draw_spark(c: Control) -> void:
 	var ctr := c.size * 0.5
 	# soft glow
@@ -334,10 +361,28 @@ func _show_splash() -> void:
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(layer)
 
-	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.07, 0.12)
+	# Warm diagonal gradient background (brand colours)
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.30, 0.13, 0.04))
+	grad.set_color(1, Color(0.12, 0.06, 0.03))
+	grad.add_point(0.5, Color(0.42, 0.18, 0.05))
+	var gtex := GradientTexture2D.new()
+	gtex.gradient = grad
+	gtex.fill_from = Vector2(0, 0)
+	gtex.fill_to = Vector2(1, 1)
+	var bg := TextureRect.new()
+	bg.texture = gtex
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(bg)
+
+	# Animated warm waves at the bottom
+	_wave_phase = 0.0
+	_wave_node = Control.new()
+	_wave_node.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_wave_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_wave_node.draw.connect(func() -> void: _draw_waves(_wave_node))
+	layer.add_child(_wave_node)
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -397,6 +442,7 @@ func _show_splash() -> void:
 	tw.tween_property(layer, "modulate:a", 0.0, 0.4)
 	tw.tween_callback(func() -> void:
 		layer.queue_free()
+		_wave_node = null
 		_booting = false
 	)
 
