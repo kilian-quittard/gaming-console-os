@@ -227,16 +227,16 @@ func _build_chrome() -> void:
 	# Scroll affordance arrows in the side margins (shown when more to explore).
 	_arrow_left = _make_arrow(true)
 	_arrow_left.set_anchors_preset(Control.PRESET_LEFT_WIDE)
-	_arrow_left.offset_left = 18
+	_arrow_left.offset_left = 8
+	_arrow_left.offset_right = 8 + 60
 	_arrow_left.offset_top = 185
 	_arrow_left.offset_bottom = -60
-	_arrow_left.custom_minimum_size = Vector2(34, 0)
 	add_child(_arrow_left)
 
 	_arrow_right = _make_arrow(false)
 	_arrow_right.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	_arrow_right.offset_right = -18
-	_arrow_right.offset_left = -52
+	_arrow_right.offset_right = -8
+	_arrow_right.offset_left = -8 - 60
 	_arrow_right.offset_top = 185
 	_arrow_right.offset_bottom = -60
 	add_child(_arrow_right)
@@ -262,18 +262,20 @@ func _make_arrow(left: bool) -> Control:
 
 
 func _draw_arrow(c: Control, left: bool) -> void:
-	var cx := c.size.x * 0.5
-	var cy := c.size.y * 0.5
-	var w := 13.0
-	var h := 24.0
-	var col := Color(1, 1, 1, 0.55)
+	var ctr := Vector2(c.size.x * 0.5, c.size.y * 0.5)
+	# Circular backing so the arrow pops against any tile/background.
+	c.draw_circle(ctr, 28.0, Color(0.0, 0.0, 0.0, 0.45))
+	c.draw_arc(ctr, 28.0, 0.0, TAU, 40, Color(1, 1, 1, 0.22), 2.0)
+	var w := 16.0
+	var h := 30.0
+	var col := Color(1, 1, 1, 0.92)
 	if left:
 		c.draw_colored_polygon(PackedVector2Array([
-			Vector2(cx + w * 0.5, cy - h * 0.5), Vector2(cx + w * 0.5, cy + h * 0.5), Vector2(cx - w * 0.5, cy),
+			ctr + Vector2(w * 0.45, -h * 0.5), ctr + Vector2(w * 0.45, h * 0.5), ctr + Vector2(-w * 0.55, 0),
 		]), col)
 	else:
 		c.draw_colored_polygon(PackedVector2Array([
-			Vector2(cx - w * 0.5, cy - h * 0.5), Vector2(cx - w * 0.5, cy + h * 0.5), Vector2(cx + w * 0.5, cy),
+			ctr + Vector2(-w * 0.45, -h * 0.5), ctr + Vector2(-w * 0.45, h * 0.5), ctr + Vector2(w * 0.55, 0),
 		]), col)
 
 
@@ -598,10 +600,12 @@ func _update_scroll_and_arrows() -> void:
 	_scroll_tween = create_tween()
 	_scroll_tween.tween_property(_scroll, "scroll_horizontal", int(round(sx)), 0.18)
 
+	# EPS avoids spurious arrows from sub-pixel rounding when the row fits.
+	var eps := 8.0
 	if _arrow_left:
-		_arrow_left.visible = sx > 1.0
+		_arrow_left.visible = sx > eps
 	if _arrow_right:
-		_arrow_right.visible = sx < max_scroll - 1.0
+		_arrow_right.visible = max_scroll > eps and sx < max_scroll - eps
 
 
 # ---- Input -----------------------------------------------------------------
