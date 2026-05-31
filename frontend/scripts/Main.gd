@@ -326,9 +326,9 @@ func _draw_waves(c: Control) -> void:
 	var w := c.size.x
 	var h := c.size.y
 	var layers := [
-		{"base": h * 0.66, "amp": 36.0, "freq": 0.0055, "sp": 0.6, "col": Color(1.0, 0.84, 0.22, 0.28)},
-		{"base": h * 0.74, "amp": 30.0, "freq": 0.0075, "sp": 0.95, "col": Color(1.0, 0.55, 0.12, 0.38)},
-		{"base": h * 0.82, "amp": 24.0, "freq": 0.0105, "sp": 1.35, "col": Color(0.96, 0.36, 0.10, 0.55)},
+		{"base": h * 0.66, "amp": 36.0, "freq": 0.0055, "sp": 0.6, "col": Color(1.0, 0.90, 0.45, 0.55)},
+		{"base": h * 0.74, "amp": 30.0, "freq": 0.0075, "sp": 0.95, "col": Color(1.0, 0.68, 0.22, 0.60)},
+		{"base": h * 0.82, "amp": 24.0, "freq": 0.0105, "sp": 1.35, "col": Color(0.93, 0.44, 0.12, 0.72)},
 	]
 	for L in layers:
 		var pts := PackedVector2Array()
@@ -343,9 +343,9 @@ func _draw_waves(c: Control) -> void:
 
 func _draw_spark(c: Control) -> void:
 	var ctr := c.size * 0.5
-	# soft glow
-	c.draw_circle(ctr, 46.0, Color(BRAND_COLOR, 0.16))
-	# 4-point star
+	# dark medallion so the spark pops on the bright splash
+	c.draw_circle(ctr, 54.0, Color(0.20, 0.08, 0.02, 0.92))
+	# 4-point star (bright gold)
 	var outer := 42.0
 	var inner := 13.0
 	var pts := PackedVector2Array()
@@ -353,7 +353,7 @@ func _draw_spark(c: Control) -> void:
 		var ang := deg_to_rad(-90.0 + i * 45.0)
 		var r := outer if i % 2 == 0 else inner
 		pts.append(ctr + Vector2(cos(ang), sin(ang)) * r)
-	c.draw_colored_polygon(pts, BRAND_COLOR)
+	c.draw_colored_polygon(pts, Color(1.0, 0.82, 0.28))
 
 
 func _show_splash() -> void:
@@ -361,11 +361,11 @@ func _show_splash() -> void:
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(layer)
 
-	# Warm diagonal gradient background (brand colours)
+	# Bright warm diagonal gradient background (brand colours)
 	var grad := Gradient.new()
-	grad.set_color(0, Color(0.30, 0.13, 0.04))
-	grad.set_color(1, Color(0.12, 0.06, 0.03))
-	grad.add_point(0.5, Color(0.42, 0.18, 0.05))
+	grad.set_color(0, Color(1.0, 0.74, 0.30))
+	grad.set_color(1, Color(0.95, 0.42, 0.14))
+	grad.add_point(0.5, Color(1.0, 0.56, 0.18))
 	var gtex := GradientTexture2D.new()
 	gtex.gradient = grad
 	gtex.fill_from = Vector2(0, 0)
@@ -403,7 +403,7 @@ func _show_splash() -> void:
 	title.text = BRAND_NAME
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_constant_override("outline_size", 0)
+	title.add_theme_color_override("font_color", Color(0.30, 0.11, 0.03))  # dark on bright bg
 	title.modulate = Color(1, 1, 1, 0)
 	vb.add_child(title)
 
@@ -411,14 +411,14 @@ func _show_splash() -> void:
 	sub.text = "PLAY · CREATE"
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.add_theme_font_size_override("font_size", 24)
-	sub.modulate = Color(BRAND_COLOR, 0.0)
+	sub.modulate = Color(0.46, 0.16, 0.03, 0.0)
 	vb.add_child(sub)
 
 	var barbg := Panel.new()
 	barbg.custom_minimum_size = Vector2(300, 8)
 	barbg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var bs := StyleBoxFlat.new()
-	bs.bg_color = Color(0.20, 0.20, 0.27)
+	bs.bg_color = Color(0.30, 0.14, 0.05, 0.45)
 	bs.set_corner_radius_all(4)
 	barbg.add_theme_stylebox_override("panel", bs)
 	vb.add_child(barbg)
@@ -428,7 +428,7 @@ func _show_splash() -> void:
 	fill.anchor_bottom = 1.0
 	fill.anchor_right = 0.0
 	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = BRAND_COLOR
+	fsb.bg_color = Color(0.55, 0.20, 0.04)
 	fsb.set_corner_radius_all(4)
 	fill.add_theme_stylebox_override("panel", fsb)
 	barbg.add_child(fill)
