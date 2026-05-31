@@ -295,15 +295,58 @@ func _build_chrome() -> void:
 	_arrow_right.offset_bottom = -60
 	add_child(_arrow_right)
 
-	# Bottom hints
+	# Bottom hint bar: coloured button badges on a dark translucent pill so it
+	# stays readable on any theme.
+	var hintbar := PanelContainer.new()
+	var hpill := StyleBoxFlat.new()
+	hpill.bg_color = Color(0.0, 0.0, 0.0, 0.36)
+	hpill.set_corner_radius_all(22)
+	hpill.content_margin_left = 24
+	hpill.content_margin_right = 24
+	hpill.content_margin_top = 9
+	hpill.content_margin_bottom = 9
+	hintbar.add_theme_stylebox_override("panel", hpill)
+	hintbar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hintbar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hintbar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	hintbar.offset_bottom = -26
+	add_child(hintbar)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 20)
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	hintbar.add_child(hbox)
+
+	var green := Color(0.40, 0.80, 0.45)
+	var yellow := Color(0.97, 0.82, 0.22)
+	var grey := Color(0.55, 0.56, 0.64)
+	var navc := Color(0.62, 0.64, 0.72)
+	var hints := [
+		{"g": "‹›", "c": navc, "w": 44.0, "t": "Naviguer"},
+		{"g": "A", "c": green, "w": 30.0, "t": "Lancer"},
+		{"g": "Y", "c": yellow, "w": 30.0, "t": "Aperçu"},
+		{"g": "X", "c": X_BLUE, "w": 30.0, "t": "Mode"},
+		{"g": "S", "c": grey, "w": 30.0, "t": "Réglages"},
+		{"g": "C", "c": grey, "w": 30.0, "t": "Cartouche"},
+	]
+	for it in hints:
+		var cell := HBoxContainer.new()
+		cell.add_theme_constant_override("separation", 7)
+		cell.add_child(_make_glyph_badge(it["g"], it["c"], it["w"], 30.0, 17))
+		var l := Label.new()
+		l.text = it["t"]
+		l.add_theme_font_size_override("font_size", 18)
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cell.add_child(l)
+		hbox.add_child(cell)
+
+	# Transient feedback label (launch / cartridge messages), above the hint bar.
 	_status = Label.new()
-	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status.add_theme_font_size_override("font_size", 16)
-	_status.modulate = Color(0.65, 0.62, 0.72)
+	_status.add_theme_font_size_override("font_size", 20)
 	_status.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_status.offset_top = -70
-	_status.offset_bottom = -34
+	_status.offset_top = -120
+	_status.offset_bottom = -90
 	add_child(_status)
 
 
@@ -637,16 +680,18 @@ func _draw_plus(c: Control, color: Color) -> void:
 	c.draw_rect(Rect2(ctr.x - ln * 0.5, ctr.y - th * 0.5, ln, th), color, true)
 
 
-func _make_glyph_badge(letter: String, color: Color) -> Panel:
+func _make_glyph_badge(letter: String, color: Color, w := 40.0, h := 40.0, font := 24) -> Panel:
 	var badge := Panel.new()
-	badge.custom_minimum_size = Vector2(40, 40)
+	badge.custom_minimum_size = Vector2(w, h)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = color
-	sb.set_corner_radius_all(10)
+	sb.set_corner_radius_all(9)
 	badge.add_theme_stylebox_override("panel", sb)
 	var l := Label.new()
 	l.text = letter
-	l.add_theme_font_size_override("font_size", 24)
+	l.add_theme_font_size_override("font_size", font)
+	l.add_theme_color_override("font_color", Color(1, 1, 1))
 	l.set_anchors_preset(Control.PRESET_FULL_RECT)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -716,8 +761,7 @@ func _populate_mode(instant := false) -> void:
 		_scroll.scroll_horizontal = 0
 
 	_selected = 0
-	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
-	_status.modulate = Color(0.20, 0.14, 0.08, 0.92) if _light_tiles() else Color(0.65, 0.62, 0.72)
+	_status.text = ""
 	await get_tree().process_frame  # let layout settle so we know the row width
 	_size_tiles_to_fit()
 	await get_tree().process_frame  # let the resize settle before scaling
