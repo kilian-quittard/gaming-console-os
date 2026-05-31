@@ -84,21 +84,38 @@ func _build_chrome() -> void:
 		tabs.add_child(lbl)
 		_tab_labels.append(lbl)
 
-	# Top-right: contextual toggle button  [X] Mode ...
-	var toggle := HBoxContainer.new()
-	toggle.add_theme_constant_override("separation", 14)
-	toggle.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	toggle.position = Vector2(-380, 60)
-	toggle.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	add_child(toggle)
+	# Top-right: contextual toggle button — badge + label inside one rounded
+	# panel so it reads as a single cohesive button.
+	var toggle_panel := PanelContainer.new()
+	var tstyle := StyleBoxFlat.new()
+	tstyle.bg_color = Color(0.17, 0.17, 0.24, 0.9)
+	tstyle.set_corner_radius_all(16)
+	tstyle.content_margin_left = 16
+	tstyle.content_margin_right = 22
+	tstyle.content_margin_top = 12
+	tstyle.content_margin_bottom = 12
+	tstyle.set_border_width_all(1)
+	tstyle.border_color = Color(1, 1, 1, 0.10)
+	toggle_panel.add_theme_stylebox_override("panel", tstyle)
+	toggle_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	toggle_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	toggle_panel.grow_vertical = Control.GROW_DIRECTION_END
+	toggle_panel.offset_right = -48
+	toggle_panel.offset_top = 50
+	add_child(toggle_panel)
+
+	var thb := HBoxContainer.new()
+	thb.add_theme_constant_override("separation", 14)
+	thb.alignment = BoxContainer.ALIGNMENT_CENTER
+	toggle_panel.add_child(thb)
 
 	_toggle_badge = _make_glyph_badge("X", X_BLUE)
-	toggle.add_child(_toggle_badge)
+	thb.add_child(_toggle_badge)
 
 	_toggle_label = Label.new()
 	_toggle_label.add_theme_font_size_override("font_size", 26)
 	_toggle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	toggle.add_child(_toggle_label)
+	thb.add_child(_toggle_label)
 
 	# Center: content row
 	var center := CenterContainer.new()
@@ -333,8 +350,12 @@ func _make_tile(item: Dictionary) -> Panel:
 	t.text = item.title
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.add_theme_font_size_override("font_size", 30)
+	# Hard guarantee the title can never overflow the tile: clip + ellipsis,
+	# width pinned to the tile, no horizontal expand.
 	t.clip_text = true
-	t.custom_minimum_size.x = TILE_SIZE.x - 24
+	t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	t.custom_minimum_size.x = TILE_SIZE.x - 28
+	t.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	vb.add_child(t)
 
 	var s := Label.new()
