@@ -15,14 +15,15 @@ var THEMES := [
 		"bg_bottom": [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)],
 	},
 	{
-		"name": "Spark",  # brand: bright sunshine — vibrant diagonal multi-hue
-		"accent": [Color(1.0, 0.62, 0.12), Color(1.0, 0.84, 0.22)],
+		"name": "Spark",  # brand: bright sunshine — GAMING orange/coral vs TRAVAIL yellow/gold
+		"accent": [Color(1.0, 0.52, 0.10), Color(1.0, 0.86, 0.16)],
 		"bg_top": [Color(0.62, 0.30, 0.08), Color(0.66, 0.46, 0.10)],
 		"bg_bottom": [Color(0.30, 0.13, 0.06), Color(0.32, 0.22, 0.07)],
+		"light_tiles": true,
 		"diag": true,
 		"grad": [
-			[Color(1.0, 0.70, 0.16), Color(0.98, 0.45, 0.13), Color(0.80, 0.22, 0.26)],  # GAMING
-			[Color(1.0, 0.84, 0.24), Color(1.0, 0.60, 0.14), Color(0.86, 0.34, 0.30)],   # TRAVAIL
+			[Color(1.0, 0.62, 0.14), Color(0.97, 0.38, 0.12), Color(0.80, 0.18, 0.24)],  # GAMING — orange→coral→red
+			[Color(1.0, 0.91, 0.34), Color(1.0, 0.74, 0.20), Color(0.97, 0.52, 0.12)],   # TRAVAIL — yellow→gold→orange
 		],
 	},
 	{
@@ -93,6 +94,7 @@ var _wifi := true
 var _booting := true
 var _scroll: ScrollContainer = null
 var _clock: Label = null
+var _name_label: Label = null
 var _arrow_left: Control = null
 var _arrow_right: Control = null
 var _scroll_tween: Tween = null
@@ -202,11 +204,11 @@ func _build_chrome() -> void:
 	avatar.add_child(ai)
 	status_bar.add_child(avatar)
 
-	var nm := Label.new()
-	nm.text = "Joueur"
-	nm.add_theme_font_size_override("font_size", 22)
-	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	status_bar.add_child(nm)
+	_name_label = Label.new()
+	_name_label.text = "Joueur"
+	_name_label.add_theme_font_size_override("font_size", 22)
+	_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	status_bar.add_child(_name_label)
 
 	_clock = Label.new()
 	_clock.add_theme_font_size_override("font_size", 24)
@@ -583,9 +585,16 @@ func _populate_mode(instant := false) -> void:
 	_bg.texture = tex
 	_motif.queue_redraw()
 
-	# Tabs highlight
+	# Chrome text adapts to bright (light-tile) themes for readability.
+	var ct: Color = Color(0.16, 0.11, 0.06) if _light_tiles() else Color(1, 1, 1)
 	for i in _tab_labels.size():
-		_tab_labels[i].modulate = Color(1, 1, 1) if i == _mode else Color(0.5, 0.5, 0.56)
+		_tab_labels[i].add_theme_color_override("font_color", ct)
+		_tab_labels[i].modulate = Color(1, 1, 1) if i == _mode else Color(1, 1, 1, 0.45)
+	if _name_label:
+		_name_label.add_theme_color_override("font_color", ct)
+	if _clock:
+		_clock.add_theme_color_override("font_color", ct)
+		_clock.modulate = Color(1, 1, 1, 0.85)
 
 	# Toggle button shows the OTHER mode
 	var other := 1 - _mode
@@ -613,7 +622,7 @@ func _populate_mode(instant := false) -> void:
 
 	_selected = 0
 	_status.text = "‹ ›  Naviguer   A  Lancer   Y  Aperçu   X  Mode   S  Réglages   C  Cartouche"
-	_status.modulate = Color(0.65, 0.62, 0.72)
+	_status.modulate = Color(0.20, 0.14, 0.08, 0.92) if _light_tiles() else Color(0.65, 0.62, 0.72)
 	await get_tree().process_frame  # let layout settle so we know the row width
 	_size_tiles_to_fit()
 	await get_tree().process_frame  # let the resize settle before scaling
@@ -635,6 +644,10 @@ func _size_tiles_to_fit() -> void:
 
 func _accent(mode: int) -> Color:
 	return THEMES[_theme]["accent"][mode]
+
+
+func _light_tiles() -> bool:
+	return THEMES[_theme].get("light_tiles", false)
 
 
 func _bg_top(mode: int) -> Color:
@@ -664,11 +677,15 @@ func _make_tile(item: Dictionary) -> Panel:
 	vb.add_theme_constant_override("separation", 14)
 	panel.add_child(vb)
 
+	var light := _light_tiles()
 	var icon_wrap := CenterContainer.new()
 	vb.add_child(icon_wrap)
 	var is_cart_kind: bool = item.kind == "cartridge" or item.kind == "cartridge_in"
 	var isz := Vector2(74, 98) if is_cart_kind else Vector2(96, 96)
-	var icon := _make_icon(item.kind, _icon_color(item.kind), isz)
+	var icol := _icon_color(item.kind)
+	if light and item.kind != "store":
+		icol = icol.darkened(0.18)  # keep contrast on the light tile
+	var icon := _make_icon(item.kind, icol, isz)
 	icon_wrap.add_child(icon)
 
 	var t := Label.new()
@@ -681,13 +698,15 @@ func _make_tile(item: Dictionary) -> Panel:
 	t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	t.custom_minimum_size.x = TILE_SIZE.x - 28
 	t.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	if light:
+		t.add_theme_color_override("font_color", Color(0.13, 0.11, 0.12))
 	vb.add_child(t)
 
 	var s := Label.new()
 	s.text = item.sub
 	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	s.add_theme_font_size_override("font_size", 16)
-	s.modulate = Color(0.70, 0.68, 0.76)
+	s.modulate = Color(0.38, 0.36, 0.40) if light else Color(0.70, 0.68, 0.76)
 	vb.add_child(s)
 
 	panel.set_meta("kind", item.kind)
@@ -696,14 +715,17 @@ func _make_tile(item: Dictionary) -> Panel:
 
 func _tile_style(is_selected: bool, is_cartridge: bool) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.20, 0.19, 0.27) if is_selected else Color(0.13, 0.13, 0.19)
-	sb.set_corner_radius_all(26)
 	var accent: Color = AMBER if is_cartridge else _accent(_mode)
+	if _light_tiles():
+		sb.bg_color = Color(1, 1, 1) if is_selected else Color(0.96, 0.94, 0.91)
+	else:
+		sb.bg_color = Color(0.20, 0.19, 0.27) if is_selected else Color(0.13, 0.13, 0.19)
+	sb.set_corner_radius_all(26)
 	sb.set_border_width_all(5 if is_selected else (2 if is_cartridge else 0))
 	sb.border_color = accent if is_selected else Color(accent, 0.4)
 	if is_selected:
-		sb.shadow_color = Color(accent, 0.35)
-		sb.shadow_size = 16
+		sb.shadow_color = Color(accent, 0.5 if _light_tiles() else 0.35)
+		sb.shadow_size = 20
 	return sb
 
 
@@ -714,7 +736,8 @@ func _update_selection(instant := false) -> void:
 		var k: String = tile.get_meta("kind")
 		var is_cart: bool = k == "cartridge" or k == "cartridge_in"
 		tile.add_theme_stylebox_override("panel", _tile_style(on, is_cart))
-		tile.modulate = Color(1, 1, 1) if on else Color(0.82, 0.82, 0.86)
+		var dim: Color = Color(0.93, 0.93, 0.94) if _light_tiles() else Color(0.82, 0.82, 0.86)
+		tile.modulate = Color(1, 1, 1) if on else dim
 
 		var target := Vector2(1.08, 1.08) if on else Vector2(0.95, 0.95)
 		if instant:
