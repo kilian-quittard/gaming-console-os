@@ -15,10 +15,15 @@ var THEMES := [
 		"bg_bottom": [Color(0.10, 0.07, 0.13), Color(0.05, 0.08, 0.13)],
 	},
 	{
-		"name": "Spark",  # brand: bright sunshine — warm orange (gaming) + gold (travail)
+		"name": "Spark",  # brand: bright sunshine — vibrant diagonal multi-hue
 		"accent": [Color(1.0, 0.62, 0.12), Color(1.0, 0.84, 0.22)],
 		"bg_top": [Color(0.62, 0.30, 0.08), Color(0.66, 0.46, 0.10)],
 		"bg_bottom": [Color(0.30, 0.13, 0.06), Color(0.32, 0.22, 0.07)],
+		"diag": true,
+		"grad": [
+			[Color(1.0, 0.70, 0.16), Color(0.98, 0.45, 0.13), Color(0.80, 0.22, 0.26)],  # GAMING
+			[Color(1.0, 0.84, 0.24), Color(1.0, 0.60, 0.14), Color(0.86, 0.34, 0.30)],   # TRAVAIL
+		],
 	},
 	{
 		"name": "Ember",  # deeper warm: red-orange + amber gold
@@ -560,13 +565,21 @@ func _make_glyph_badge(letter: String, color: Color) -> Panel:
 
 func _populate_mode(instant := false) -> void:
 	# Background tint for this mode
+	var th: Dictionary = THEMES[_theme]
 	var grad := Gradient.new()
-	grad.set_color(0, _bg_top(_mode))
-	grad.set_color(1, _bg_bottom(_mode))
 	var tex := GradientTexture2D.new()
+	if th.has("grad"):
+		var cols: Array = th["grad"][_mode]
+		grad.set_color(0, cols[0])
+		grad.set_color(1, cols[cols.size() - 1])
+		for i in range(1, cols.size() - 1):
+			grad.add_point(float(i) / float(cols.size() - 1), cols[i])
+	else:
+		grad.set_color(0, _bg_top(_mode))
+		grad.set_color(1, _bg_bottom(_mode))
 	tex.gradient = grad
 	tex.fill_from = Vector2(0, 0)
-	tex.fill_to = Vector2(0, 1)
+	tex.fill_to = Vector2(1, 1) if th.get("diag", false) else Vector2(0, 1)
 	_bg.texture = tex
 	_motif.queue_redraw()
 
