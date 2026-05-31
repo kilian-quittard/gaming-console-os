@@ -2,3 +2,10 @@ cosign.key
 _build_*
 output
 _build-*/**
+
+# Godot editor cache
+frontend/.godot/
+
+# Dev screenshots (local only)
+.frontend_screenshot.png
+.frontend_travail.png
