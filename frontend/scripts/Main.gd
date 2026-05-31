@@ -65,6 +65,7 @@ var _vol := 70
 var _bright := 80
 var _wifi := true
 
+var _booting := true
 var _scroll: ScrollContainer = null
 var _clock: Label = null
 var _arrow_left: Control = null
@@ -86,6 +87,7 @@ var _status: Label
 func _ready() -> void:
 	_build_chrome()
 	_populate_mode(true)
+	_show_splash()
 
 
 # ---- Static chrome (top bar, toggle button, hints) -------------------------
@@ -283,6 +285,87 @@ func _make_gutter() -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(GUTTER, 0)
 	return c
+
+
+func _show_splash() -> void:
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(layer)
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.07, 0.07, 0.12)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 16)
+	center.add_child(vb)
+
+	var title := Label.new()
+	title.text = "GAMING CONSOLE"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 64)
+	title.modulate = Color(1, 1, 1, 0)
+	vb.add_child(title)
+
+	var sub := Label.new()
+	sub.text = "OS"
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.add_theme_font_size_override("font_size", 26)
+	sub.modulate = Color(MODE_ACCENTS[0], 0.0)
+	vb.add_child(sub)
+
+	var barbg := Panel.new()
+	barbg.custom_minimum_size = Vector2(300, 8)
+	barbg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = Color(0.20, 0.20, 0.27)
+	bs.set_corner_radius_all(4)
+	barbg.add_theme_stylebox_override("panel", bs)
+	vb.add_child(barbg)
+	var fill := Panel.new()
+	fill.anchor_left = 0.0
+	fill.anchor_top = 0.0
+	fill.anchor_bottom = 1.0
+	fill.anchor_right = 0.0
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = MODE_ACCENTS[0]
+	fsb.set_corner_radius_all(4)
+	fill.add_theme_stylebox_override("panel", fsb)
+	barbg.add_child(fill)
+
+	var tw := create_tween()
+	tw.tween_property(title, "modulate:a", 1.0, 0.4)
+	tw.parallel().tween_property(sub, "modulate:a", 1.0, 0.4)
+	tw.tween_property(fill, "anchor_right", 1.0, 0.85)
+	tw.tween_interval(0.2)
+	tw.tween_property(layer, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(func() -> void:
+		layer.queue_free()
+		_booting = false
+	)
+
+
+func _play_insert_anim() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if _tiles.is_empty():
+		return
+	var t := _tiles[0]
+	if _tweens.size() > 0 and _tweens[0] != null and _tweens[0].is_valid():
+		_tweens[0].kill()
+	t.scale = Vector2(0.7, 0.7)
+	t.modulate = Color(1.7, 1.7, 1.7)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(t, "scale", Vector2(1.08, 1.08), 0.42).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(t, "modulate", Color(1, 1, 1), 0.5)
+	_tweens[0] = tw
 
 
 func _update_clock() -> void:
@@ -611,6 +694,9 @@ func _update_scroll_and_arrows() -> void:
 # ---- Input -----------------------------------------------------------------
 
 func _input(event: InputEvent) -> void:
+	if _booting:
+		return  # ignore input during the boot splash
+
 	# Preview overlay captures input while open: A launches, B closes.
 	if _in_preview:
 		if event.is_action_pressed("ui_cancel"):
@@ -646,6 +732,8 @@ func _input(event: InputEvent) -> void:
 		if _cartridge_inserted:
 			_status.text = "Cartouche détectée : %s" % CARTRIDGE_GAME.title
 			_status.modulate = AMBER
+			if _mode == 0:
+				_play_insert_anim()
 		else:
 			_status.text = "Cartouche retirée"
 			_status.modulate = Color(0.65, 0.62, 0.72)
