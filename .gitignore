@@ -8,3 +8,7 @@ frontend/.godot/
 
 # Dev screenshots (local only)
 .frontend_*.png
+
+# Office lock/temp files
+.~lock.*#
+~$*
