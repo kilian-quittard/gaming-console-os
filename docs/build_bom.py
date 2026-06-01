@@ -1,0 +1,240 @@
+"""Generate SPARK_BOM.xlsx — console bill of materials: prices, opinion, 2026 flagship comparison, buy links."""
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+import os
+
+NCOLS = 10  # A..J
+
+wb = Workbook()
+ws = wb.active
+ws.title = "BOM SPARK"
+
+ORANGE = "F08C29"; DARK = "2B2B33"; LIGHT = "FCEFE0"; LINKBLUE = "1A5FB4"
+
+title_font = Font(size=16, bold=True, color="FFFFFF")
+hdr_font = Font(size=11, bold=True, color="FFFFFF")
+cell_font = Font(size=11)
+bold = Font(size=11, bold=True)
+link_font = Font(size=10, color=LINKBLUE, underline="single")
+thin = Side(style="thin", color="DDDDDD")
+border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+def last_col():
+    return get_column_letter(NCOLS)
+
+# Title
+ws.merge_cells("A1:%s1" % last_col())
+ws["A1"] = "SPARK — Bill of Materials (BOM)  ·  estimations à valider via les liens"
+ws["A1"].font = title_font
+ws["A1"].fill = PatternFill("solid", fgColor=ORANGE)
+ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+ws.row_dimensions[1].height = 26
+
+# Note line
+ws.merge_cells("A2:%s2" % last_col())
+ws["A2"] = ("Prix indicatifs en €. 'Retail' = à l'unité en magasin. 'Pro/volume' = estimation fournisseur en gros (>=1000 u., tray/B2B), toujours plus bas. "
+            "Liens majoritairement US (USD) -> convertir/valider. 'Phare 2026' = le meilleur équivalent du marché, pour situer le choix.")
+ws["A2"].font = Font(italic=True, size=9, color="555555")
+ws["A2"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+ws.row_dimensions[2].height = 40
+
+headers = ["Composant", "Pièce recommandée / détail", "Mon avis (expert)",
+           "Prix retail u. (€)", "Prix pro/volume (€)",
+           "Équivalent phare 2026", "Avis différence (phare vs choisi)",
+           "Lien 1", "Lien 2", "Lien 3"]
+ws.append(headers)
+hr = 3
+for c in range(1, NCOLS + 1):
+    cell = ws.cell(row=hr, column=c)
+    cell.font = hdr_font
+    cell.fill = PatternFill("solid", fgColor=DARK)
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border = border
+ws.row_dimensions[hr].height = 34
+
+# [comp, piece, avis, retail, pro, flagship2026, diff, l1, l2, l3]
+rows = [
+    ["APU AMD (Ryzen 7 8845HS, 780M)",
+     "APU 8C/16T + iGPU RDNA3 780M. Pas vendu nu au détail -> proxy mini-PC, ou tray AMD en volume.",
+     "Coeur de la console. 8845HS = top 1080p indé mais cher -> tue le 300€. Alternatives moins chères : Z1 non-Extreme, 7640U/8640U, R5 660M.",
+     230, 160,
+     "Ryzen AI 9 HX 370 (Radeon 890M RDNA3.5) / AMD Z2 Extreme",
+     "890M ~25-40% > 780M, mais +cher/+chaud/+conso. Pour de l'indé 1080p, 780M = sweet spot ; le phare = overkill qui casse le budget.",
+     "https://www.bee-link.com/products/beelink-ser8-8845hs",
+     "https://www.newegg.com/p/pl?N=100008345+601456629",
+     "https://www.gmktec.com/products/amd-ryzen-7-8845hs-mini-pc-nucbox-k8"],
+
+    ["RAM 16 Go DDR5-5600 SO-DIMM",
+     "1x16 Go (ou 2x8 dual-channel = mieux iGPU). LPDDR5 soudé en volume = moins cher/plus fin.",
+     "Dual-channel obligatoire pour l'iGPU. 16 Go mini. En volume, LPDDR5 soudée > SO-DIMM.",
+     42, 26,
+     "32 Go LPDDR5X-7500/8000 soudée",
+     "Plus de bande passante = +5-15% iGPU + multitâche. 16 Go DC-5600 suffit en 1080p indé. Phare = confort, pas indispensable.",
+     "https://www.newegg.com/crucial-16gb-ddr5-5600-cas-latency-cl46-notebook-memory/p/N82E16820156314",
+     "https://www.newegg.com/kingston-16gb/p/0RM-001W-006C8",
+     "https://www.newegg.com/p/pl?d=ddr5+5600+sodimm"],
+
+    ["Stockage NVMe 512 Go M.2 2280",
+     "SSD PCIe Gen3/Gen4. 256 Go trop juste, 512 Go bon compromis.",
+     "Gen3 suffit pour de l'indé (Gen4 inutile, +cher/+chaud). 512 Go mini vu la taille des jeux.",
+     45, 30,
+     "1 To NVMe Gen4 (voire Gen5)",
+     "Capacité x2, débit x2. Inutile pour indé (jeux légers) ; Gen4/5 = +chaud/+cher. 512 Go Gen3 OK.",
+     "https://www.amazon.com/Silicon-Power-512GB-Gen3x4-SP512GBP34A60M28/dp/B07ZGJYLNL",
+     "https://www.amazon.com/Western-Digital-512GB-Gaming-Internal/dp/B0CKRX3WDH",
+     "https://www.newegg.com/p/pl?d=512gb+ssd+m.2"],
+
+    ["Carte mère custom (PCBA)",
+     "PCB custom + assemblage CMS. NRE (étude) une fois, puis coût/unité en volume.",
+     "Le vrai poste 'console' : concevoir le PCB autour de l'APU. NRE élevé amorti sur volume. Pas d'achat retail.",
+     70, 45,
+     "PCB 6-8 couches, VRM renforcé, Wi-Fi 7 intégré",
+     "Marginal pour ce TDP. +couches = +coût. Un 4 couches bien conçu suffit. Phare = inutile au début.",
+     "https://jlcpcb.com",
+     "https://www.pcbway.com",
+     "https://www.alibaba.com/showroom/pcba-assembly.html"],
+
+    ["Refroidissement (blower + caloduc)",
+     "Ventilo blower bas profil + heatsink/caloduc dimensionné au TDP (35-54W).",
+     "Wall-powered -> pousse le TDP, dimensionne large + silencieux. Type laptop/console.",
+     16, 9,
+     "Chambre à vapeur + grand ventilo (type Steam Deck OLED)",
+     "Plus silencieux/froid à TDP élevé. TDP modéré -> blower+caloduc suffit. Phare = confort acoustique surtout.",
+     "https://www.amazon.com/mini-pc-cooling-fan/s?k=mini+pc+cooling+fan",
+     "https://www.alibaba.com/showroom/mini-pc-fan.html",
+     "https://mitxpc.com/collections/cpu-coolers"],
+
+    ["Alimentation 19V ~120W",
+     "Bloc externe (brique) 120W, ou alim interne. Externe = moins cher/plus simple.",
+     "Brique externe = économique, évite la chaleur interne. 120W large pour l'APU.",
+     26, 12,
+     "Chargeur GaN compact 140W USB-C PD",
+     "Plus petit/moderne/USB-C universel (recharge accessoires). Brique barrel 120W = -cher. USB-C PD = bel argument 2026.",
+     "https://www.walmart.com/ip/19V-6-3A-120W-Laptop-AC-Adapter-Power-Supply-Charger-US-Power-Cord-for-ASUS/554524924",
+     "https://www.newegg.com/p/pl?d=19v+power+adapter",
+     "https://www.ebay.com/b/19V-Laptop-Power-Adapters-Chargers/31510/bn_650230"],
+
+    ["Boîtier (coque)",
+     "Plastique injecté (moule custom, NRE) ou tôle/alu petit volume.",
+     "Moule injection = NRE 30-100k€ mais qq € l'unité en volume. Identité produit.",
+     25, 16,
+     "Unibody aluminium + finitions premium",
+     "Toucher/thermique premium mais NRE + coût lourds. ABS injecté = bon pour 300€. L'identité (design) compte > le matériau.",
+     "https://www.alibaba.com/showroom/plastic-enclosure.html",
+     "https://www.protocase.com",
+     "https://www.pcbway.com/rapid-prototyping/cnc-machining/"],
+
+    ["Lecteur micro-SD (cartouche)",
+     "Connecteur SD push-push qualité + circuit. (Modules 'Arduino' = proto seulement.)",
+     "Le slot 'cartouche'. Coût pièce faible. La SÉCURITÉ cartouche est un autre sujet (voir phare).",
+     4, 1.5,
+     "Connecteur UHS-II + élément sécurisé (secure element) pour DRM",
+     "ICI le phare COMPTE : un élément sécurisé = vraie sécurité cartouche (sinon copiable). UHS-II = chargement + rapide. Surcoût lié à ton modèle cartouche -> à trancher.",
+     "https://www.amazon.com/MicroSD-Breakout-Reader-Module-Expansion/dp/B09SD7D1VK",
+     "https://www.ebay.com/itm/386914952215",
+     "https://www.amazon.com/pzsmocn-Micro-SD-Compatible-Raspberry-Teaching/dp/B08FB3GC34"],
+
+    ["Manette",
+     "Manette sans fil (bundle) ou vendue à part. OEM Chine en volume.",
+     "Si incluse -> +coût. Option : la vendre séparément pour tenir le prix. OEM customisable.",
+     28, 14,
+     "Sticks Hall effect + haptique + gâchettes analogiques",
+     "Hall = ANTI-DRIFT (gros argument durabilité/marketing). Haptique = ressenti premium. Vaut le coup d'envisager les sticks Hall même en milieu de gamme.",
+     "https://www.alibaba.com/showroom/wholesale-game-controller.html",
+     "https://www.made-in-china.com/products-search/hot-china-products/Wholesale_Game_Controller.html",
+     "https://www.amazon.com/Wireless-Controllers/s?k=Wireless+Controllers"],
+
+    ["Connecteurs / câbles / divers",
+     "HDMI/DP, USB, jack, nappe, vis, antenne Wi-Fi/BT, pâte thermique.",
+     "Petit matériel. Sourcer via distributeurs élec en volume.",
+     14, 9,
+     "Connecteurs premium, Wi-Fi 7 / BT 5.4",
+     "Wi-Fi 6E suffit largement. Premium = marginal, peu visible. Pas prioritaire.",
+     "https://www.lcsc.com",
+     "https://www.mouser.com",
+     "https://www.digikey.com"],
+
+    ["Assemblage + test",
+     "Montage, flash OS, test fonctionnel, emballage. Sous-traité (EMS) en volume.",
+     "Coût main d'oeuvre/EMS. Baisse fort en volume. Inclure test + flash SPARK.",
+     22, 14,
+     "EMS premium + QC 100% + burn-in",
+     "QC renforcé = moins de SAV/retours. Coût + mais fiabilité. Compromis selon volume/budget.",
+     "https://www.alibaba.com/showroom/ems-electronic-manufacturing-service.html",
+     "https://jlcpcb.com/smt-assembly",
+     "https://www.pcbway.com/pcb-assembly.html"],
+]
+
+r = hr + 1
+for row in rows:
+    ws.cell(row=r, column=1, value=row[0]).font = bold
+    ws.cell(row=r, column=2, value=row[1]).font = cell_font
+    ws.cell(row=r, column=3, value=row[2]).font = cell_font
+    ws.cell(row=r, column=4, value=row[3]).font = cell_font
+    ws.cell(row=r, column=5, value=row[4]).font = cell_font
+    ws.cell(row=r, column=4).number_format = u'#,##0 €'
+    ws.cell(row=r, column=5).number_format = u'#,##0 €'
+    ws.cell(row=r, column=6, value=row[5]).font = cell_font
+    ws.cell(row=r, column=7, value=row[6]).font = cell_font
+    for i, url in enumerate(row[7:10]):
+        c = ws.cell(row=r, column=8 + i, value="Lien %d" % (i + 1))
+        c.hyperlink = url
+        c.font = link_font
+    for c in range(1, NCOLS + 1):
+        cell = ws.cell(row=r, column=c)
+        cell.border = border
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if (r - hr) % 2 == 0:
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+    ws.row_dimensions[r].height = 66
+    r += 1
+
+# Totals
+total_row = r
+ws.cell(row=total_row, column=1, value="TOTAL BOM").font = Font(bold=True, size=12)
+ws.cell(row=total_row, column=3, value="Somme des composants (hors NRE moule/PCB, transport, marge, R&D, marketing)").font = Font(italic=True, size=9, color="555555")
+d = ws.cell(row=total_row, column=4, value="=SUM(D4:D%d)" % (total_row - 1))
+e = ws.cell(row=total_row, column=5, value="=SUM(E4:E%d)" % (total_row - 1))
+for cc in (d, e):
+    cc.font = Font(bold=True, size=12)
+    cc.number_format = u'#,##0 €'
+    cc.fill = PatternFill("solid", fgColor="FFE3C2")
+for c in range(1, NCOLS + 1):
+    ws.cell(row=total_row, column=c).border = border
+ws.row_dimensions[total_row].height = 24
+
+# Analysis block
+ar = total_row + 2
+notes = [
+    "LECTURE :",
+    "- Pro/volume ~ somme ci-dessus. Retail u. = si tu achetais tout à l'unité (jamais en prod).",
+    "- Prix de vente realiste = BOM pro x ~1.6 a 2.0 (transport + douane + marge revendeur 30% + R&D amortie + support + marketing).",
+    "- Donc BOM pro ~300-340€ -> prix retail realiste ~450-600€. Le 300€ retail = TRES dur sans volume Nintendo/Valve.",
+    "",
+    "OU LE 'PHARE' VAUT LE COUP (selon moi) :",
+    "- Manette sticks Hall (anti-drift) = vrai argument durabilite/marketing.",
+    "- Slot cartouche avec element securise = SI tu veux une vraie securite cartouche (sinon copiable).",
+    "- USB-C PD pour l'alim = moderne, recharge accessoires.",
+    "Le reste (APU 890M, 32 Go, 1 To Gen4, alu, vapor chamber) = surcout pour gain faible sur de l'indé 1080p.",
+    "",
+    "POUR VISER 300€ : APU moins cher (Z1/7640U/R5 660M, -70 a -120€), LPDDR5 soudee, manette a part. OU viser 399-449€. OU vendre a perte + abo/store.",
+    "A FAIRE : remplacer mes estimations par de VRAIS devis (APU tray AMD, RAM/SSD volume, devis PCBA, devis moule boitier).",
+]
+for n in notes:
+    cell = ws.cell(row=ar, column=1, value=n)
+    cell.font = Font(bold=n.endswith(":"), size=10, color=("B5651D" if n.endswith(":") else "333333"))
+    ws.merge_cells(start_row=ar, start_column=1, end_row=ar, end_column=NCOLS)
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+    ar += 1
+
+# Column widths
+widths = [28, 34, 40, 13, 15, 30, 40, 8, 8, 8]
+for i, w in enumerate(widths, start=1):
+    ws.column_dimensions[get_column_letter(i)].width = w
+
+ws.freeze_panes = "A4"
+
+out = os.path.join(os.path.dirname(__file__), "SPARK_BOM.xlsx")
+wb.save(out)
+print("saved", out)
