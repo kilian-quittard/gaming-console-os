@@ -57,7 +57,7 @@ ws.row_dimensions[hr].height = 34
 rows = [
     ["APU AMD (Ryzen 7 8845HS, 780M)",
      "APU 8C/16T + iGPU RDNA3 780M. Pas vendu nu au détail -> proxy mini-PC, ou tray AMD en volume.",
-     "Coeur de la console. 8845HS = top 1080p indé mais cher -> tue le 300€. Alternatives moins chères : Z1 non-Extreme, 7640U/8640U, R5 660M.",
+     "Coeur de la console. 8845HS = top 1080p indé mais cher -> tue le 300€. Alternatives : Z1 non-Extreme, 7640U/8640U, R5 660M. Puce NON vendue nue -> reference achetable = mini-PC complet ~799$ (Beelink SER8, prix verifie 2026).",
      230, 160,
      "Ryzen AI 9 HX 370 (Radeon 890M RDNA3.5) / AMD Z2 Extreme",
      "890M ~25-40% > 780M, mais +cher/+chaud/+conso. Pour de l'indé 1080p, 780M = sweet spot ; le phare = overkill qui casse le budget.",
@@ -219,7 +219,11 @@ notes = [
     "Le reste (APU 890M, 32 Go, 1 To Gen4, alu, vapor chamber) = surcout pour gain faible sur de l'indé 1080p.",
     "",
     "POUR VISER 300€ : APU moins cher (Z1/7640U/R5 660M, -70 a -120€), LPDDR5 soudee, manette a part. OU viser 399-449€. OU vendre a perte + abo/store.",
-    "A FAIRE : remplacer mes estimations par de VRAIS devis (APU tray AMD, RAM/SSD volume, devis PCBA, devis moule boitier).",
+    "",
+    "ANCRAGE REEL VERIFIE (2026) : un mini-PC 8845HS COMPLET pret a l'emploi (Beelink SER8) = ~799$ (~740€).",
+    "-> Meme une machine de ce niveau toute faite coute 600-800€. Donc 300€ retail neuf = encore plus dur que l'estime.",
+    "",
+    "FIABILITE PRIX : colonnes = ESTIMATIONS expertes. Certains liens pointent vers une machine entiere ou une categorie, pas la piece exacte -> a confirmer par de vrais devis (APU tray AMD, RAM/SSD volume, devis PCBA JLCPCB/PCBWay, devis moule boitier).",
 ]
 for n in notes:
     cell = ws.cell(row=ar, column=1, value=n)
