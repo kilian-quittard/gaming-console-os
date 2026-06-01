@@ -78,6 +78,17 @@ EOF
 # Disable COPRs so they don't end up enabled on the final image:
 # dnf5 -y copr disable ublue-os/staging
 
+# --- Console lean (SAFE) ---
+# Heavy desktop removal + user lockdown are DEFERRED to the hardware phase
+# (immutable image is fragile to package removal, and the result must be
+# validated on a real GPU — see docs/strip-plan.md). Here we only do safe tweaks.
+
+# Disable services a closed console doesn't need (harmless even if absent).
+systemctl mask cups.service cups.socket 2>/dev/null || true
+
+# Gaming-friendly memory tweak.
+echo "vm.swappiness=10" > /etc/sysctl.d/99-spark.conf
+
 #### Example for enabling a System Unit File
 
 systemctl enable podman.socket
