@@ -1,0 +1,61 @@
+{
+  "_comment": "SPARK catalogue (seed = jeux libres/FOSS, plomberie + démo). Schéma = fondation store + système d'onboarding. launch = config par jeu (Proton/natif, exe, args, FSR, réso) testée plus tard sur GPU réel.",
+  "version": 1,
+  "games": [
+    {
+      "title": "SuperTuxKart",
+      "dev": "SuperTuxKart Team",
+      "genre": "Course",
+      "rating": 4.4,
+      "size_gb": 1.3,
+      "price": 0,
+      "license": "Libre (GPL)",
+      "desc": "Kart arcade libre : circuits fous, items, multijoueur local et en ligne.",
+      "launch": { "runtime": "native", "exe": "supertuxkart", "args": "", "fsr": "quality", "res": "1080p" }
+    },
+    {
+      "title": "Mindustry",
+      "dev": "Anuke",
+      "genre": "Tower defense / Usine",
+      "rating": 4.6,
+      "size_gb": 0.2,
+      "price": 0,
+      "license": "Libre (GPL)",
+      "desc": "Construis des usines, défends ta base, automatise la production. Addictif.",
+      "launch": { "runtime": "native", "exe": "mindustry", "args": "", "fsr": "off", "res": "1080p" }
+    },
+    {
+      "title": "0 A.D.",
+      "dev": "Wildfire Games",
+      "genre": "Stratégie (RTS)",
+      "rating": 4.3,
+      "size_gb": 2.6,
+      "price": 0,
+      "license": "Libre (GPL)",
+      "desc": "RTS historique gratuit : gère ta cité antique, ton armée, tes ressources.",
+      "launch": { "runtime": "native", "exe": "0ad", "args": "", "fsr": "quality", "res": "1080p" }
+    },
+    {
+      "title": "Veloren",
+      "dev": "Veloren Team",
+      "genre": "RPG / Aventure",
+      "rating": 4.1,
+      "size_gb": 1.0,
+      "price": 0,
+      "license": "Libre (GPL)",
+      "desc": "RPG voxel multijoueur en monde ouvert : explore, combats, crafte.",
+      "launch": { "runtime": "native", "exe": "veloren", "args": "", "fsr": "balanced", "res": "1080p" }
+    },
+    {
+      "title": "Xonotic",
+      "dev": "Team Xonotic",
+      "genre": "FPS Arène",
+      "rating": 4.2,
+      "size_gb": 1.0,
+      "price": 0,
+      "license": "Libre (GPL)",
+      "desc": "FPS arène rapide et nerveux, gratuit. Esport-friendly, 60-120 fps faciles.",
+      "launch": { "runtime": "native", "exe": "xonotic", "args": "", "fsr": "off", "res": "1080p" }
+    }
+  ]
+}

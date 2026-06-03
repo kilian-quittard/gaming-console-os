@@ -41,16 +41,12 @@ const VISIBLE_TILES := 4   # how many tiles fill the row at once (rest scroll in
 const ROW_SEP := 40
 const GUTTER := 40         # inner side padding so a hovered edge tile isn't clipped
 
-# Content per mode. kind drives the icon style. (All placeholders for now.)
-const CONTENT := [
-	[ # GAMING
+# Content per mode. kind drives the icon style.
+# GAMING is rebuilt from the catalogue (catalogue/catalogue.json) at startup;
+# the values below are a fallback if the catalogue is missing.
+var CONTENT := [
+	[ # GAMING (fallback)
 		{"title": "CARTOUCHE", "sub": "Insérez une cartouche", "kind": "cartridge"},
-		{"title": "Pixel Racer", "sub": "Digital", "kind": "game"},
-		{"title": "Star Forge", "sub": "Digital", "kind": "game"},
-		{"title": "Cave Dive", "sub": "Digital", "kind": "game"},
-		{"title": "Neon Drift", "sub": "Digital", "kind": "game"},
-		{"title": "Loop Hero+", "sub": "Digital", "kind": "game"},
-		{"title": "Bit Brawl", "sub": "Digital", "kind": "game"},
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
 	],
 	[ # TRAVAIL
@@ -60,6 +56,7 @@ const CONTENT := [
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
 	],
 ]
+var _catalogue: Array = []
 
 # Demo "cartridge" the simulated slot reveals when "inserted" (key C / Y button).
 const CARTRIDGE_GAME := {"title": "INDIE QUEST", "sub": "Cartouche", "kind": "game"}
@@ -116,9 +113,33 @@ var _status: Label
 
 
 func _ready() -> void:
+	_load_catalogue()
 	_build_chrome()
 	_populate_mode(true)
 	_show_splash()
+
+
+func _load_catalogue() -> void:
+	var path := "res://catalogue/catalogue.json"
+	if not FileAccess.file_exists(path):
+		return
+	var f := FileAccess.open(path, FileAccess.READ)
+	var data: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(data) != TYPE_DICTIONARY or not data.has("games"):
+		return
+	_catalogue = data["games"]
+	# Build GAMING content: cartridge slot + catalogue games + store.
+	var gaming: Array = [{"title": "CARTOUCHE", "sub": "Insérez une cartouche", "kind": "cartridge"}]
+	for g in _catalogue:
+		gaming.append({
+			"title": g.get("title", "Jeu"),
+			"sub": g.get("genre", "Digital"),
+			"kind": "game",
+			"meta": g,
+		})
+	gaming.append({"title": "Store", "sub": "Ajouter", "kind": "store"})
+	CONTENT[0] = gaming
 
 
 # ---- Static chrome (top bar, toggle button, hints) -------------------------
@@ -1288,7 +1309,9 @@ func _open_preview(item: Dictionary) -> void:
 	t.add_theme_color_override("font_color", txt)
 	rightc.add_child(t)
 
-	var rating := 4.0 + float(abs(item.title.hash()) % 11) / 10.0  # 4.0–5.0
+	# Real metadata from the catalogue if present, else fallback values.
+	var gm: Dictionary = item.get("meta", {})
+	var rating: float = gm.get("rating", 4.0 + float(abs(item.title.hash()) % 11) / 10.0)
 	var rrow := HBoxContainer.new()
 	rrow.add_theme_constant_override("separation", 10)
 	rightc.add_child(rrow)
@@ -1301,14 +1324,17 @@ func _open_preview(item: Dictionary) -> void:
 	rrow.add_child(rl)
 
 	var genres := ["Action", "Aventure", "Plateforme", "Rogue-lite", "Puzzle"]
+	var genre: String = gm.get("genre", genres[abs(item.title.hash()) % genres.size()])
+	var size_gb: float = gm.get("size_gb", 0.6 + float(abs(item.title.hash()) % 35) / 10.0)
+	var price_txt: String = "Gratuit" if gm.get("price", -1) == 0 else gm.get("license", "Indé")
 	var meta := Label.new()
-	meta.text = "Indé · %s   ·   %.1f Go" % [genres[abs(item.title.hash()) % genres.size()], 0.6 + float(abs(item.title.hash()) % 35) / 10.0]
+	meta.text = "%s   ·   %.1f Go   ·   %s" % [genre, size_gb, price_txt]
 	meta.add_theme_font_size_override("font_size", 17)
 	meta.add_theme_color_override("font_color", muted)
 	rightc.add_child(meta)
 
 	var d := Label.new()
-	d.text = _desc_for(item)
+	d.text = gm.get("desc", _desc_for(item))
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	d.add_theme_font_size_override("font_size", 17)
 	d.add_theme_color_override("font_color", muted)
