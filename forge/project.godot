@@ -1,11 +1,14 @@
-; SPARK FORGE — Lite 2D prototype (Godot 4.6)
+; SPARK FORGE — éditeur/jeu 2D (Godot 4.6)
 config_version=5
 
 [application]
 
-config/name="SPARK FORGE (Lite 2D)"
-run/main_scene="res://Main.tscn"
+config/name="SPARK FORGE"
+config/version="0.1"
+config/tags=PackedStringArray("spark", "forge")
+run/main_scene="res://scenes/game/Forge.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.svg"
 
 [display]
 
@@ -13,6 +16,22 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg", "res://addons/xsm/plugin.cfg")
+
+[file_customization]
+
+folder_colors={
+"res://addons/": "purple",
+"res://assets/": "pink",
+"res://config/": "yellow",
+"res://data/": "blue",
+"res://scenes/": "red",
+"res://scripts/": "gray",
+"res://test/": "green"
+}
 
 [rendering]
 
