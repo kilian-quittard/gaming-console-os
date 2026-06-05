@@ -125,6 +125,8 @@ var respawn_cell := Vector2i(4, 8)
 var last_from_cursor := false
 var enemies := []        # {pos:Vector2, dir:int, alive:bool}
 var plats := []          # {pos:Vector2, dir:int, min:float, max:float}
+var testing := false
+var test_dir := 0
 
 # audio
 var sfx := {}
@@ -137,6 +139,38 @@ func _ready() -> void:
 	_build_audio()
 	_seed_demo()
 	queue_redraw()
+	if OS.get_cmdline_args().has("--selftest"):
+		call_deferred("_self_test")
+
+
+func _self_test() -> void:
+	var dt := 1.0 / 60.0
+	rows = 14
+	cols = 24
+	grid.clear()
+	for x in range(cols):
+		grid[Vector2i(x, rows - 1)] = GROUND
+	# rampe 45° montante vers la droite (cols 6..10), avec remplissage Sol dessous
+	for i in range(5):
+		grid[Vector2i(6 + i, rows - 2 - i)] = SLOPE_R
+		for fy in range(rows - 1 - i, rows - 1):
+			grid[Vector2i(6 + i, fy)] = GROUND
+	grid[Vector2i(2, rows - 2)] = SPAWN
+	testing = true
+	_start_play(false)
+	print("=== CLIMB (vers la droite, y doit DIMINUER) ===")
+	test_dir = 1
+	for f in range(170):
+		_physics_process(dt)
+		if f % 17 == 0:
+			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, ppos.x, ppos.y, str(on_floor)])
+	print("=== DESCEND (vers la gauche, y doit AUGMENTER) ===")
+	test_dir = -1
+	for f in range(170):
+		_physics_process(dt)
+		if f % 17 == 0:
+			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, ppos.x, ppos.y, str(on_floor)])
+	get_tree().quit()
 
 
 func _compute_grid() -> void:
@@ -465,6 +499,8 @@ func _paste_clip() -> void:
 
 
 func _dir_held() -> Vector2i:
+	if testing:
+		return Vector2i(test_dir, 0)
 	var v := Vector2i.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_joy_button_pressed(0, JOY_BUTTON_DPAD_LEFT): v.x -= 1
 	if Input.is_key_pressed(KEY_RIGHT) or Input.is_joy_button_pressed(0, JOY_BUTTON_DPAD_RIGHT): v.x += 1
@@ -692,7 +728,8 @@ func _solid_rects() -> Array:
 	var out := []
 	for c in _cells(Rect2(ppos - Vector2(CELL, CELL), PSIZE + Vector2(CELL, CELL) * 2)):
 		var t: int = grid.get(c, EMPTY)
-		if t == GROUND or t == BREAKABLE or t == DOOR:
+		# une case sous une pente = remplissage visuel → non solide (la pente gère)
+		if (t == GROUND or t == BREAKABLE or t == DOOR) and not _under_slope(c):
 			out.append(_cell_rect(c))
 	for p in plats:
 		out.append(Rect2(p.pos, Vector2(CELL, 14)))
@@ -750,6 +787,18 @@ func _solid_tile(c: Vector2i) -> bool:
 
 func _is_slope(t: int) -> bool:
 	return SLOPES.has(t)
+
+
+# une case est "sous une pente" si, en remontant sa colonne sur des cases pleines
+# contiguës, on atteint une tuile pente (= remplissage visuel sous la rampe)
+func _under_slope(c: Vector2i) -> bool:
+	var y := c.y - 1
+	while y >= 0:
+		var t: int = grid.get(Vector2i(c.x, y), EMPTY)
+		if t == EMPTY: return false
+		if _is_slope(t): return true
+		y -= 1
+	return false
 
 
 # hauteur de la surface (y écran) d'une tuile pente, à la position x locale [0..CELL]
