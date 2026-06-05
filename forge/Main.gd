@@ -26,6 +26,8 @@ const STOMP_BOUNCE := -460.0
 const SPRING_V := -1050.0
 const ESIZE := 36
 const ESPEED := 85.0
+const SLOPE_SNAP_UP := 22.0      # tolérance pénétration sous la rampe (montée)
+const SLOPE_SNAP_DOWN := 16.0    # tolérance au-dessus (coller en descente)
 
 # curseur
 const CURSOR_DELAY := 0.25
@@ -630,21 +632,23 @@ func _physics_process(delta: float) -> void:
 
 	_move_plats(delta)
 	var rects := _solid_rects()
+	was_floor = on_floor
+	on_floor = false
+	var head_hit := false
 
-	# X
+	# X : déplace, cale sur la rampe (montée), PUIS collision murs pleins
+	# (l'ordre fait que le remplissage sous la pente ne bloque pas)
 	ppos.x += pvel.x * delta
+	ppos.x = clampf(ppos.x, 0, cols * CELL - PSIZE.x)
+	_slope_snap()
 	for r in rects:
 		var pr := Rect2(ppos, PSIZE)
 		if pr.intersects(r):
 			if pvel.x > 0: ppos.x = r.position.x - PSIZE.x
 			elif pvel.x < 0: ppos.x = r.position.x + r.size.x
 			pvel.x = 0
-	ppos.x = clampf(ppos.x, 0, cols * CELL - PSIZE.x)
 
-	# Y
-	was_floor = on_floor
-	on_floor = false
-	var head_hit := false
+	# Y : gravité + collision sol/plafond pleins
 	ppos.y += pvel.y * delta
 	for r in rects:
 		var pr := Rect2(ppos, PSIZE)
@@ -653,12 +657,8 @@ func _physics_process(delta: float) -> void:
 			elif pvel.y < 0: ppos.y = r.position.y + r.size.y; head_hit = true
 			pvel.y = 0
 
-	# pentes : caler le joueur sur la surface inclinée
-	var sy := _slope_ground(ppos.x + PSIZE.x * 0.5)
-	if sy != INF and pvel.y >= 0 and ppos.y + PSIZE.y > sy - 6 and ppos.y + PSIZE.y < sy + CELL:
-		ppos.y = sy - PSIZE.y
-		pvel.y = 0
-		on_floor = true
+	# pente : coller en descente (évite le rollback / saut de marche)
+	_slope_snap()
 
 	if head_hit: _hit_head()
 	if on_floor: coyote_t = COYOTE
@@ -764,6 +764,18 @@ func _slope_surface(t: int, c: Vector2i, lx: float) -> float:
 		GSL_L_HI: return top + lx * 0.5                # 26.5° ↖ moitié haute (gauche)
 		GSL_L_LO: return top + CELL * 0.5 + lx * 0.5   # 26.5° ↖ moitié basse (droite)
 	return INF
+
+
+# cale le joueur sur la surface d'une pente (montée ou descente)
+func _slope_snap() -> void:
+	if pvel.y < 0: return    # en montée de saut : ne pas coller
+	var sy := _slope_ground(ppos.x + PSIZE.x * 0.5)
+	if sy == INF: return
+	var feet := ppos.y + PSIZE.y
+	if feet >= sy - SLOPE_SNAP_DOWN and feet <= sy + SLOPE_SNAP_UP:
+		ppos.y = sy - PSIZE.y
+		pvel.y = 0.0
+		on_floor = true
 
 
 # y de sol sous le joueur s'il est sur une pente, sinon INF
