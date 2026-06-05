@@ -239,6 +239,78 @@ for i, w in enumerate(widths, start=1):
 
 ws.freeze_panes = "A4"
 
+# ---------------------------------------------------------------------------
+# Sheet 2 : APU 680M vs 780M comparison
+# ---------------------------------------------------------------------------
+ws2 = wb.create_sheet("APU 680M vs 780M")
+ws2.merge_cells("A1:D1")
+ws2["A1"] = "SPARK — APU : Radeon 680M (base) vs 780M (Pro)  ·  prix/perf indicatifs, à valider"
+ws2["A1"].font = title_font
+ws2["A1"].fill = PatternFill("solid", fgColor=ORANGE)
+ws2["A1"].alignment = Alignment(horizontal="center", vertical="center")
+ws2.row_dimensions[1].height = 26
+
+c2_hdr = ["Critère", "Radeon 680M (base)", "Radeon 780M (Pro)", "Différence / note"]
+ws2.append(c2_hdr)
+for c in range(1, 5):
+    cell = ws2.cell(row=2, column=c)
+    cell.font = hdr_font
+    cell.fill = PatternFill("solid", fgColor=DARK)
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border = border
+ws2.row_dimensions[2].height = 28
+
+comp = [
+    ["Architecture", "RDNA2", "RDNA3", "RDNA3 = dual-issue + clocks + IA"],
+    ["Compute Units", "12 CU", "12 CU", "Même nombre, mais RDNA3 plus efficace"],
+    ["Horloge GPU", "~2.2-2.4 GHz", "~2.7 GHz", "780M plus haut"],
+    ["APU exemples", "Ryzen 6800H / 6900HX / 7735HS", "Ryzen 7840HS / 8840HS / 8845HS", "780M = génération plus récente"],
+    ["Perf GPU relative", "100 % (base)", "~+25-30 %", "Écart net sur AA/AAA, faible sur le reste"],
+    ["Indé / 2D / esport 1080p", "60 fps facile", "60 fps facile", "ÉGAL (les deux suffisent)"],
+    ["AA / un peu vieux 1080p", "30-45 fps medium", "45-60 fps medium", "780M plus confortable"],
+    ["AAA récents 1080p", "720p low + FSR ~30", "1080p low + FSR 30-45", "780M = un cran au-dessus"],
+    ["Émulation GC/Wii/PS2", "OK", "OK + marge (réso interne +)", "Les deux bien"],
+    ["Upscaling FSR / AFMF", "Identique", "Identique", "PAS lié à la puissance"],
+    ["TDP / conso", "~35-54 W", "~35-54 W", "Similaire (wall-powered)"],
+    ["Prix plateforme (BOM, volume est.)", "~90-130 €", "~150-200 €", "Δ ~ +40-70 € pour le 780M"],
+    ["Mini-PC proxy (retail)", "~300-400 € (Beelink SER6…)", "~500-800 € (Beelink SER8…)", "Machine entière, pas la puce seule"],
+]
+r = 3
+for row in comp:
+    ws2.cell(row=r, column=1, value=row[0]).font = bold
+    for c in range(2, 5):
+        ws2.cell(row=r, column=c, value=row[c - 1]).font = cell_font
+    for c in range(1, 5):
+        cell = ws2.cell(row=r, column=c)
+        cell.border = border
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if r % 2 == 1:
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+    ws2.row_dimensions[r].height = 30
+    r += 1
+
+# verdict block
+vr = r + 1
+verdict = [
+    "VERDICT :",
+    "- Pour de l'INDÉ / esport / rétro / création (FORGE) : 680M = SUFFISANT → choisis-le (moins cher, ~-40-70 € BOM, plus près de 300 €).",
+    "- Pour viser AA/AAA confortables : 780M (= SKU 'Pro', prix plus haut).",
+    "- L'upscaling (FSR/AFMF) est IDENTIQUE sur les deux → le 680M en profite autant.",
+    "- Δ prix puce ~40-70 € en volume ; les écarts mini-PC (300 vs 800 €) = machines entières, pas la puce.",
+    "- Stratégie SPARK : 680M = base abordable, 780M = Pro optionnel. (Premium AAA = Strix Halo, autre gamme.)",
+    "Prix = ESTIMATIONS à confirmer par devis (AMD tray / fabricant).",
+]
+for v in verdict:
+    cell = ws2.cell(row=vr, column=1, value=v)
+    cell.font = Font(bold=v.endswith(":"), size=10, color=("B5651D" if v.endswith(":") else "333333"))
+    ws2.merge_cells(start_row=vr, start_column=1, end_row=vr, end_column=4)
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+    vr += 1
+
+for i, w in enumerate([34, 30, 32, 40], start=1):
+    ws2.column_dimensions[get_column_letter(i)].width = w
+ws2.freeze_panes = "A3"
+
 out = os.path.join(os.path.dirname(__file__), "SPARK_BOM.xlsx")
 wb.save(out)
 print("saved", out)
