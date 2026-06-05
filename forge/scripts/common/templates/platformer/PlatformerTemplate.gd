@@ -1,6 +1,10 @@
 extends Node2D
 class_name PlatformerTemplate
 # Template PLATEFORMER : données de tuiles + simulation de jeu + rendu du monde.
+
+signal player_died     # émis au début de la mort (avant le timer de respawn)
+signal level_won       # émis quand le joueur touche l'arrivée
+signal coin_collected  # émis à chaque pièce ramassée
 # Le personnage est piloté par une machine XSM (StateRegions : Locomotion + Air),
 # voir scenes/.../PlatformerPlay.tscn et les états dans states/.
 # Le noeud est dessiné DERRIÈRE ForgeApp (show_behind_parent) : il rend le monde,
@@ -366,6 +370,7 @@ func _die() -> void:
 	app._emit(ppos + PSIZE * 0.5, 16, Color("ecf0f1"), 260.0, 0.5, true, 4.0)
 	app._shake(9.0, 0.30)
 	Input.start_joy_vibration(0, 0.6, 0.7, 0.30); app._play("death")
+	player_died.emit()
 
 
 func _interactions() -> void:
@@ -375,6 +380,7 @@ func _interactions() -> void:
 				app.grid.erase(c); coins_got += 1
 				app._emit(_cell_center(c), 8, COLORS[COIN], 160.0, 0.35, false, 3.0)
 				Input.start_joy_vibration(0, 0.25, 0.0, 0.04); app._play("coin")
+				coin_collected.emit()
 			KEY:
 				app.grid.erase(c); has_key = true
 				app._emit(_cell_center(c), 10, COLORS[KEY], 180.0, 0.4, false, 3.0)
@@ -392,6 +398,7 @@ func _interactions() -> void:
 					won = true
 					app._emit(_cell_center(c), 24, COLORS[GOAL], 240.0, 0.7, false, 4.0)
 					app._play("win")
+					level_won.emit()
 	if has_key:
 		for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
 			if app.grid.get(c, EMPTY) == DOOR:
@@ -443,7 +450,8 @@ func _draw() -> void:
 	var lvl := Vector2(app.cols * CELL, app.rows * CELL)
 	draw_rect(Rect2(app._w2s(Vector2.ZERO), lvl * app.view_scale), th[1])
 
-	if app.mode == "edit" and not app.dezoom:
+	var _hide_chrome: bool = app.get("hide_editor_chrome") == true
+	if app.mode == "edit" and not app.dezoom and not _hide_chrome:
 		var gcol := Color(1, 1, 1, 0.06)
 		for x in range(app.cols + 1):
 			draw_line(app._w2s(Vector2(x * CELL, 0)), app._w2s(Vector2(x * CELL, app.rows * CELL)), gcol)
@@ -460,7 +468,7 @@ func _draw() -> void:
 		var c: Color = p.col; c.a = a
 		draw_circle(app._w2s(p.pos), p.size * app.view_scale, c)
 
-	if app.mode == "edit":
+	if app.mode == "edit" and not _hide_chrome:
 		if app.sel_mode and app.sel_anchor != Vector2i(-1, -1):
 			var x0 := mini(app.sel_anchor.x, app.cursor.x); var y0 := mini(app.sel_anchor.y, app.cursor.y)
 			var x1 := maxi(app.sel_anchor.x, app.cursor.x); var y1 := maxi(app.sel_anchor.y, app.cursor.y)
