@@ -1,0 +1,37 @@
+[gd_scene load_steps=9 format=3 uid="uid://cplatplay0001"]
+
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/PlatformerTemplate.gd" id="1_tmpl"]
+[ext_resource type="Script" path="res://addons/xsm/state_regions.gd" id="2_regions"]
+[ext_resource type="Script" path="res://addons/xsm/state.gd" id="3_state"]
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/states/Idle.gd" id="4_idle"]
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/states/Run.gd" id="5_run"]
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/states/Grounded.gd" id="6_grounded"]
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/states/Jumping.gd" id="7_jumping"]
+[ext_resource type="Script" path="res://scripts/common/templates/platformer/states/Falling.gd" id="8_falling"]
+
+[node name="PlatformerPlay" type="Node2D"]
+script = ExtResource("1_tmpl")
+
+[node name="PlayerSM" type="Node" parent="."]
+script = ExtResource("2_regions")
+
+[node name="Locomotion" type="Node" parent="PlayerSM"]
+script = ExtResource("3_state")
+
+[node name="Idle" type="Node" parent="PlayerSM/Locomotion"]
+script = ExtResource("4_idle")
+
+[node name="Run" type="Node" parent="PlayerSM/Locomotion"]
+script = ExtResource("5_run")
+
+[node name="Air" type="Node" parent="PlayerSM"]
+script = ExtResource("3_state")
+
+[node name="Grounded" type="Node" parent="PlayerSM/Air"]
+script = ExtResource("6_grounded")
+
+[node name="Jumping" type="Node" parent="PlayerSM/Air"]
+script = ExtResource("7_jumping")
+
+[node name="Falling" type="Node" parent="PlayerSM/Air"]
+script = ExtResource("8_falling")
