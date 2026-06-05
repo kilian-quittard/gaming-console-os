@@ -311,6 +311,107 @@ for i, w in enumerate([34, 30, 32, 40], start=1):
     ws2.column_dimensions[get_column_letter(i)].width = w
 ws2.freeze_panes = "A3"
 
+# ---------------------------------------------------------------------------
+# Sheet 3 : full machine cost — 680M build vs 780M build
+# ---------------------------------------------------------------------------
+ws3 = wb.create_sheet("Coût machine 680M vs 780M")
+ws3.merge_cells("A1:D1")
+ws3["A1"] = "SPARK — Coût machine complète : build 680M vs build 780M  ·  prix pro/volume estimés (€)"
+ws3["A1"].font = title_font
+ws3["A1"].fill = PatternFill("solid", fgColor=ORANGE)
+ws3["A1"].alignment = Alignment(horizontal="center", vertical="center")
+ws3.row_dimensions[1].height = 26
+
+ws3.append(["Composant", "Build 680M (€)", "Build 780M (€)", "Note"])
+for c in range(1, 5):
+    cell = ws3.cell(row=2, column=c)
+    cell.font = hdr_font
+    cell.fill = PatternFill("solid", fgColor=DARK)
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border = border
+ws3.row_dimensions[2].height = 26
+
+# [composant, prix680, prix780, note]
+mc = [
+    ["APU", 110, 170, "Seule vraie différence (680M vs 780M, volume)"],
+    ["RAM 16 Go DDR5 dual-channel", 26, 26, ""],
+    ["Stockage NVMe 512 Go", 30, 30, ""],
+    ["Carte mère custom (PCBA)", 45, 45, "hors NRE étude"],
+    ["Refroidissement", 9, 9, ""],
+    ["Alimentation", 12, 12, ""],
+    ["Boîtier", 16, 16, "hors NRE moule"],
+    ["Lecteur micro-SD", 1.5, 1.5, ""],
+    ["Manette", 14, 14, "option : vendre à part"],
+    ["Connecteurs / divers", 9, 9, ""],
+    ["Assemblage + test", 14, 14, ""],
+]
+r = 3
+for row in mc:
+    ws3.cell(row=r, column=1, value=row[0]).font = bold
+    ws3.cell(row=r, column=2, value=row[1]).font = cell_font
+    ws3.cell(row=r, column=3, value=row[2]).font = cell_font
+    ws3.cell(row=r, column=4, value=row[3]).font = Font(size=9, italic=True, color="666666")
+    ws3.cell(row=r, column=2).number_format = u'#,##0 €'
+    ws3.cell(row=r, column=3).number_format = u'#,##0 €'
+    for c in range(1, 5):
+        cell = ws3.cell(row=r, column=c)
+        cell.border = border
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+        if r % 2 == 1:
+            cell.fill = PatternFill("solid", fgColor=LIGHT)
+    r += 1
+
+# TOTAL BOM
+tr = r
+ws3.cell(row=tr, column=1, value="TOTAL BOM (pièces)").font = Font(bold=True, size=12)
+b680 = ws3.cell(row=tr, column=2, value="=SUM(B3:B%d)" % (tr - 1))
+b780 = ws3.cell(row=tr, column=3, value="=SUM(C3:C%d)" % (tr - 1))
+for cc in (b680, b780):
+    cc.font = Font(bold=True, size=12)
+    cc.number_format = u'#,##0 €'
+    cc.fill = PatternFill("solid", fgColor="FFE3C2")
+ws3.cell(row=tr, column=4, value="hors transport/marge/R&D/marketing").font = Font(size=9, italic=True, color="666666")
+for c in range(1, 5):
+    ws3.cell(row=tr, column=c).border = border
+
+# Retail estimates
+r2 = tr + 1
+ws3.cell(row=r2, column=1, value="Prix retail estimé ×1.5 (direct, marge fine)").font = bold
+rb1 = ws3.cell(row=r2, column=2, value="=B%d*1.5" % tr)
+rb2 = ws3.cell(row=r2, column=3, value="=C%d*1.5" % tr)
+r3 = tr + 2
+ws3.cell(row=r3, column=1, value="Prix retail estimé ×1.8 (marge + distrib)").font = bold
+rc1 = ws3.cell(row=r3, column=2, value="=B%d*1.8" % tr)
+rc2 = ws3.cell(row=r3, column=3, value="=C%d*1.8" % tr)
+for cc in (rb1, rb2, rc1, rc2):
+    cc.number_format = u'#,##0 €'
+    cc.font = bold
+for rr in (r2, r3):
+    for c in range(1, 5):
+        ws3.cell(row=rr, column=c).border = border
+
+# notes
+nr = r3 + 2
+mnotes = [
+    "LECTURE :",
+    "- Seule différence = l'APU (680M ~110€ vs 780M ~170€) -> Δ BOM ~ +60€ pour le 780M.",
+    "- TOTAL BOM ~ 287€ (680M) vs ~347€ (780M). Retail réaliste = BOM ×1.5 à ×1.8.",
+    "- 680M : retail ~430-516€. 780M : retail ~520-625€.",
+    "- => Le 300€ retail N'EST PAS atteint, même en 680M (BOM déjà ~287€). Pour 300€ : APU encore plus faible (Vega/660M), couper RAM/manette, ou vendre à perte + abo.",
+    "- Manette vendue à part = -14€ BOM. APU plus faible = la plus grosse économie.",
+    "Prix = ESTIMATIONS (à confirmer par devis AMD tray / fabricant / PCBA / moule).",
+]
+for n in mnotes:
+    cell = ws3.cell(row=nr, column=1, value=n)
+    cell.font = Font(bold=n.endswith(":"), size=10, color=("B5651D" if n.endswith(":") else "333333"))
+    ws3.merge_cells(start_row=nr, start_column=1, end_row=nr, end_column=4)
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+    nr += 1
+
+for i, w in enumerate([34, 16, 16, 38], start=1):
+    ws3.column_dimensions[get_column_letter(i)].width = w
+ws3.freeze_panes = "A3"
+
 out = os.path.join(os.path.dirname(__file__), "SPARK_BOM.xlsx")
 wb.save(out)
 print("saved", out)
