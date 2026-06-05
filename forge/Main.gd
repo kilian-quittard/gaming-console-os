@@ -24,6 +24,8 @@ const MAX_FALL := 1300.0
 const DEADZONE := 0.35
 const STOMP_BOUNCE := -460.0
 const SPRING_V := -1050.0
+const ESIZE := 36
+const ESPEED := 85.0
 
 # curseur
 const CURSOR_DELAY := 0.25
@@ -574,7 +576,7 @@ func _start_play(from_cursor: bool) -> void:
 	enemies.clear(); plats.clear()
 	for k in grid:
 		if grid[k] == ENEMY:
-			enemies.append({"pos": Vector2(k.x * CELL + 6, k.y * CELL + 6), "dir": -1, "alive": true})
+			enemies.append({"pos": Vector2(k.x * CELL + 6, k.y * CELL + (CELL - ESIZE)), "dir": -1, "alive": true, "vy": 0.0})
 		elif grid[k] == MOVPLAT:
 			plats.append({"pos": Vector2(k.x * CELL, k.y * CELL), "dir": 1, "min": float((k.x - 3) * CELL), "max": float((k.x + 3) * CELL)})
 	_place_player(spawn_cell)
@@ -676,7 +678,7 @@ func _solid_rects() -> Array:
 	var out := []
 	for c in _cells(Rect2(ppos - Vector2(CELL, CELL), PSIZE + Vector2(CELL, CELL) * 2)):
 		var t: int = grid.get(c, EMPTY)
-		if t == GROUND or t == BREAKABLE or (t == DOOR and not has_key):
+		if t == GROUND or t == BREAKABLE or t == DOOR:
 			out.append(_cell_rect(c))
 	for p in plats:
 		out.append(Rect2(p.pos, Vector2(CELL, 14)))
@@ -696,19 +698,32 @@ func _update_enemies(delta: float) -> void:
 	var pr := Rect2(ppos, PSIZE)
 	for en in enemies:
 		if not en.alive: continue
-		var w := CELL - 12
-		en.pos.x += en.dir * 80.0 * delta
-		# rebrousse au mur ou au vide
-		var ahead := Vector2i(int((en.pos.x + (w if en.dir > 0 else 0)) / CELL), int((en.pos.y + w) / CELL))
-		var below := Vector2i(ahead.x, int((en.pos.y + w + 4) / CELL))
-		if _solid_tile(ahead) or not _solid_tile(below):
+		# gravité + pose sur le sol
+		en.vy = min(en.vy + GRAVITY * delta, MAX_FALL)
+		en.pos.y += en.vy * delta
+		var grounded := false
+		for cx in [int(en.pos.x / CELL), int((en.pos.x + ESIZE - 1) / CELL)]:
+			var fc := Vector2i(cx, int((en.pos.y + ESIZE) / CELL))
+			if _solid_tile(fc):
+				en.pos.y = fc.y * CELL - ESIZE; en.vy = 0.0; grounded = true
+		# patrouille : demi-tour au mur ou au bord du vide (seulement si au sol)
+		var nx: float = en.pos.x + en.dir * ESPEED * delta
+		var front_col := int((nx + (ESIZE if en.dir > 0 else 0)) / CELL)
+		var foot_row := int((en.pos.y + ESIZE - 1) / CELL)
+		var wall := _solid_tile(Vector2i(front_col, foot_row))
+		var edge := grounded and not _solid_tile(Vector2i(front_col, foot_row + 1))
+		if wall or edge:
 			en.dir = -en.dir
-		var er := Rect2(en.pos, Vector2(w, w))
+		else:
+			en.pos.x = nx
+		en.pos.x = clampf(en.pos.x, 0, cols * CELL - ESIZE)
+		# collision joueur
+		var er := Rect2(en.pos, Vector2(ESIZE, ESIZE))
 		if pr.intersects(er):
-			if pvel.y > 0 and (ppos.y + PSIZE.y) - en.pos.y < 20:
+			if pvel.y > 0 and (ppos.y + PSIZE.y) - en.pos.y < 22:
 				en.alive = false
 				pvel.y = STOMP_BOUNCE
-				_emit(er.position + Vector2(w, w) * 0.5, 10, COLORS[ENEMY], 200.0, 0.4, true, 4.0)
+				_emit(er.position + Vector2(ESIZE, ESIZE) * 0.5, 10, COLORS[ENEMY], 200.0, 0.4, true, 4.0)
 				_shake(4.0, 0.12); _play("stomp")
 			else:
 				_die()
@@ -716,7 +731,7 @@ func _update_enemies(delta: float) -> void:
 
 func _solid_tile(c: Vector2i) -> bool:
 	var t: int = grid.get(c, EMPTY)
-	return t == GROUND or t == BREAKABLE or (t == DOOR and not has_key)
+	return t == GROUND or t == BREAKABLE or t == DOOR
 
 
 func _die() -> void:
@@ -751,6 +766,14 @@ func _interactions() -> void:
 					won = true
 					_emit(_cell_center(c), 24, COLORS[GOAL], 240.0, 0.7, false, 4.0)
 					_play("win")
+	# porte : s'ouvre au contact si on a une clé (consomme la clé)
+	if has_key:
+		for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
+			if grid.get(c, EMPTY) == DOOR:
+				grid.erase(c); has_key = false
+				_emit(_cell_center(c), 14, COLORS[DOOR], 200.0, 0.45, true, 4.0)
+				_play("key"); _shake(3.0, 0.1)
+				break
 
 
 # ============================================================= HELPERS
@@ -830,8 +853,6 @@ func _draw() -> void:
 	for k in grid:
 		# en jeu, ennemis et plateformes sont des entités (pas la tuile statique)
 		if mode == "play" and (grid[k] == ENEMY or grid[k] == MOVPLAT):
-			continue
-		if mode == "play" and grid[k] == DOOR and has_key:
 			continue
 		_draw_tile(_w2s(Vector2(k.x * CELL, k.y * CELL)), grid[k], view_scale)
 
