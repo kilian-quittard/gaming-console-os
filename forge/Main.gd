@@ -32,18 +32,25 @@ const CURSOR_DELAY := 0.25
 const RATE_SLOW := 0.12
 const RATE_FAST := 0.035
 
-enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR }
-const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR]
+enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
+	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO }
+const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
+	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO]
+const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO]
 const NAMES := {
 	GROUND: "Sol", SPAWN: "Spawn", COIN: "Pièce", ENEMY: "Ennemi", GOAL: "Arrivée",
 	SPRING: "Ressort", SPIKE: "Piques", BREAKABLE: "Cassable", MOVPLAT: "Plateforme",
-	CHECKPOINT: "Checkpoint", KEY: "Clé", DOOR: "Porte"
+	CHECKPOINT: "Checkpoint", KEY: "Clé", DOOR: "Porte",
+	SLOPE_R: "Pente45 ↗", SLOPE_L: "Pente45 ↖", GSL_R_LO: "Pente↗ bas", GSL_R_HI: "Pente↗ haut",
+	GSL_L_HI: "Pente↖ haut", GSL_L_LO: "Pente↖ bas"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
 	ENEMY: Color("e74c3c"), GOAL: Color("3498db"), SPRING: Color("e67e22"),
 	SPIKE: Color("95a5a6"), BREAKABLE: Color("a0522d"), MOVPLAT: Color("16a085"),
-	CHECKPOINT: Color("9b59b6"), KEY: Color("f1c40f"), DOOR: Color("7f5539")
+	CHECKPOINT: Color("9b59b6"), KEY: Color("f1c40f"), DOOR: Color("7f5539"),
+	SLOPE_R: Color("6b4a2b"), SLOPE_L: Color("6b4a2b"), GSL_R_LO: Color("6b4a2b"),
+	GSL_R_HI: Color("6b4a2b"), GSL_L_HI: Color("6b4a2b"), GSL_L_LO: Color("6b4a2b")
 }
 const BG_THEMES := [
 	[Color("1b2838"), Color("223349")], [Color("2c1b38"), Color("3a2349")],
@@ -646,6 +653,13 @@ func _physics_process(delta: float) -> void:
 			elif pvel.y < 0: ppos.y = r.position.y + r.size.y; head_hit = true
 			pvel.y = 0
 
+	# pentes : caler le joueur sur la surface inclinée
+	var sy := _slope_ground(ppos.x + PSIZE.x * 0.5)
+	if sy != INF and pvel.y >= 0 and ppos.y + PSIZE.y > sy - 6 and ppos.y + PSIZE.y < sy + CELL:
+		ppos.y = sy - PSIZE.y
+		pvel.y = 0
+		on_floor = true
+
 	if head_hit: _hit_head()
 	if on_floor: coyote_t = COYOTE
 	if on_floor and not was_floor:
@@ -732,6 +746,40 @@ func _update_enemies(delta: float) -> void:
 func _solid_tile(c: Vector2i) -> bool:
 	var t: int = grid.get(c, EMPTY)
 	return t == GROUND or t == BREAKABLE or t == DOOR
+
+
+func _is_slope(t: int) -> bool:
+	return SLOPES.has(t)
+
+
+# hauteur de la surface (y écran) d'une tuile pente, à la position x locale [0..CELL]
+func _slope_surface(t: int, c: Vector2i, lx: float) -> float:
+	var top := float(c.y * CELL)
+	var bot := float((c.y + 1) * CELL)
+	match t:
+		SLOPE_R: return bot - lx                      # 45° monte vers la droite
+		SLOPE_L: return top + lx                       # 45° monte vers la gauche
+		GSL_R_LO: return bot - lx * 0.5                # 26.5° ↗ moitié basse
+		GSL_R_HI: return bot - CELL * 0.5 - lx * 0.5   # 26.5° ↗ moitié haute
+		GSL_L_HI: return top + lx * 0.5                # 26.5° ↖ moitié haute (gauche)
+		GSL_L_LO: return top + CELL * 0.5 + lx * 0.5   # 26.5° ↖ moitié basse (droite)
+	return INF
+
+
+# y de sol sous le joueur s'il est sur une pente, sinon INF
+func _slope_ground(footx: float) -> float:
+	var col := int(footx / CELL)
+	var lx := footx - col * CELL
+	var foot_row := int((ppos.y + PSIZE.y) / CELL)
+	var best := INF
+	for dy in [-1, 0, 1]:
+		var c := Vector2i(col, foot_row + dy)
+		var t: int = grid.get(c, EMPTY)
+		if _is_slope(t):
+			var sy := _slope_surface(t, c, lx)
+			if sy >= c.y * CELL - 2 and sy <= (c.y + 1) * CELL + 2:
+				if best == INF or sy < best: best = sy
+	return best
 
 
 func _die() -> void:
@@ -941,6 +989,18 @@ func _draw_tile(p: Vector2, t: int, scale := 1.0, alpha := 1.0) -> void:
 			draw_rect(Rect2(p, Vector2(cs, cs)), col)
 			draw_line(p + Vector2(0, cs * 0.5), p + Vector2(cs, cs * 0.5), col.darkened(0.3), 1.5)
 			draw_line(p + Vector2(cs * 0.5, 0), p + Vector2(cs * 0.5, cs), col.darkened(0.3), 1.5)
+		SLOPE_R:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, 0)]), col)
+		SLOPE_L:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, 0), p + Vector2(0, cs), p + Vector2(cs, cs)]), col)
+		GSL_R_LO:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, cs * 0.5)]), col)
+		GSL_R_HI:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, 0), p + Vector2(0, cs * 0.5)]), col)
+		GSL_L_HI:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, 0), p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, cs * 0.5)]), col)
+		GSL_L_LO:
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs * 0.5), p + Vector2(0, cs), p + Vector2(cs, cs)]), col)
 		_:
 			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col)
 
