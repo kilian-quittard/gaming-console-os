@@ -488,6 +488,12 @@ func _draw_tile(p: Vector2, t: int, scale := 1.0, alpha := 1.0) -> void:
 			draw_rect(Rect2(p + Vector2(cs * 0.4 + 4 * scale, pad), Vector2(cs * 0.4, cs * 0.3)), col)
 		SPAWN:
 			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col, false, 3.0)
+		GROUND:
+			# cellule pleine (terrain uni, pas de trous entre blocs) + liseré haut subtil
+			draw_rect(Rect2(p, Vector2(cs, cs)), col)
+			var top := col.lightened(0.12)
+			top.a = col.a
+			draw_rect(Rect2(p, Vector2(cs, max(2.0, cs * 0.10))), top)
 		_:
 			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col)
 
