@@ -5,9 +5,11 @@ _build-*/**
 
 # Godot editor cache
 frontend/.godot/
+forge/.godot/
 
 # Dev screenshots (local only)
 .frontend_*.png
+.forge_*.png
 
 # Office lock/temp files
 .~lock.*#
