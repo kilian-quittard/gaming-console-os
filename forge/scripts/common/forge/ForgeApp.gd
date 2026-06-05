@@ -1,68 +1,26 @@
 extends Node2D
-# SPARK FORGE — Lite 2D (plateformer), manette-first.
-# Juice (sons générés, particules, screen shake, squash/stretch), ennemis vivants
-# (patrouille + écrasables), sauvegarde/chargement, nouvelles tuiles, menu éditeur.
+# SPARK FORGE — coquille générique : shell (écrans XSM), éditeur de niveau, chrome (UI),
+# caméra/vue, fx, audio, sauvegarde de projets. Le GENRE (tuiles + simulation + rendu du
+# monde + personnage XSM) vit dans un template à part (scripts/common/templates/...).
 
 const CELL := 48
 const TOPBAR := 52
 const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
-const PSIZE := Vector2(36, 36)
-const SAVE_PATH := "user://forge_level.json"
 const PROJ_DIR := "user://forge_projects/"
 const TEMPLATES := {
 	"2D": [{"id": "platformer", "name": "Plateformer"}],
 	"3D": []
 }
-
-# physique
-const GRAVITY := 1900.0
-const SPEED := 330.0
-const JUMP_V := -660.0
-const ACCEL_GROUND := 2600.0
-const ACCEL_AIR := 1500.0
-const FRICTION := 3000.0
-const JUMP_CUT := 0.45
-const COYOTE := 0.10
-const JUMP_BUFFER := 0.12
-const MAX_FALL := 1300.0
-const DEADZONE := 0.35
-const STOMP_BOUNCE := -460.0
-const SPRING_V := -1050.0
-const ESIZE := 36
-const ESPEED := 85.0
-const SLOPE_SNAP_UP := 22.0      # tolérance pénétration sous la rampe (montée)
-const SLOPE_SNAP_DOWN := 16.0    # tolérance au-dessus (coller en descente)
-
-# curseur
 const CURSOR_DELAY := 0.25
 const RATE_SLOW := 0.12
 const RATE_FAST := 0.035
-
-enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
-	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO }
-const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
-	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO]
-const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO]
-const NAMES := {
-	GROUND: "Sol", SPAWN: "Spawn", COIN: "Pièce", ENEMY: "Ennemi", GOAL: "Arrivée",
-	SPRING: "Ressort", SPIKE: "Piques", BREAKABLE: "Cassable", MOVPLAT: "Plateforme",
-	CHECKPOINT: "Checkpoint", KEY: "Clé", DOOR: "Porte",
-	SLOPE_R: "Pente45 ↗", SLOPE_L: "Pente45 ↖", GSL_R_LO: "Pente↗ bas", GSL_R_HI: "Pente↗ haut",
-	GSL_L_HI: "Pente↖ haut", GSL_L_LO: "Pente↖ bas"
-}
-const COLORS := {
-	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
-	ENEMY: Color("e74c3c"), GOAL: Color("3498db"), SPRING: Color("e67e22"),
-	SPIKE: Color("95a5a6"), BREAKABLE: Color("a0522d"), MOVPLAT: Color("16a085"),
-	CHECKPOINT: Color("9b59b6"), KEY: Color("f1c40f"), DOOR: Color("7f5539"),
-	SLOPE_R: Color("6b4a2b"), SLOPE_L: Color("6b4a2b"), GSL_R_LO: Color("6b4a2b"),
-	GSL_R_HI: Color("6b4a2b"), GSL_L_HI: Color("6b4a2b"), GSL_L_LO: Color("6b4a2b")
-}
+const DEADZONE := 0.35
 const BG_THEMES := [
 	[Color("1b2838"), Color("223349")], [Color("2c1b38"), Color("3a2349")],
 	[Color("1b3826"), Color("224935")], [Color("382b1b"), Color("493a23")]
 ]
+const PLATFORMER_PLAY := preload("res://scenes/game/PlatformerPlay.tscn")
 
 # état éditeur
 var grid := {}
@@ -70,7 +28,7 @@ var cols := LEVEL_COLS_DEF
 var rows := 14
 var cursor := Vector2i(4, 8)
 var pal := 0
-var mode := "edit"
+var mode := "edit"             # "edit" | "play"
 var cursor_cd := 0.0
 var hold_time := 0.0
 var last_dir := Vector2i.ZERO
@@ -83,11 +41,9 @@ var bg_theme := 0
 var undo_stack := []
 var redo_stack := []
 
-# menu radial
+# menu radial / éditeur
 var radial_open := false
 var radial_pick := 0
-
-# menu éditeur
 var menu_open := false
 var menu_idx := 0
 var menu_items := []
@@ -97,55 +53,35 @@ var toast_t := 0.0
 # sélection / copier-coller
 var sel_mode := false
 var sel_anchor := Vector2i(-1, -1)
-var clipboard := {}      # offset Vector2i -> type
+var clipboard := {}
 var clip_size := Vector2i.ZERO
 
-# vue
+# vue (partagée avec le template pour le rendu du monde)
 var view_origin := Vector2.ZERO
 var view_scale := 1.0
 var dezoom := false
 
 # fx
-var particles := []      # {pos,vel,life,max,col,size,grav}
+var particles := []
 var shake_t := 0.0
 var shake_mag := 0.0
 var squash := Vector2.ONE
 var music_on := false
 
-# état jeu
-var ppos := Vector2.ZERO
-var pvel := Vector2.ZERO
-var on_floor := false
-var was_floor := false
-var coyote_t := 0.0
-var jbuf := 0.0
-var coins_got := 0
-var coins_total := 0
-var dead := false
-var won := false
-var death_t := 0.0
-var has_key := false
-var spawn_cell := Vector2i(4, 8)
-var respawn_cell := Vector2i(4, 8)
-var last_from_cursor := false
-var enemies := []        # {pos:Vector2, dir:int, alive:bool}
-var plats := []          # {pos:Vector2, dir:int, min:float, max:float}
-var testing := false
-var test_dir := 0
-
-# shell (écrans hors éditeur)
-var screen := "dim"      # "dim" | "list" | "template" | "edit"
+# shell
+var screen := "dim"
 var cur_dim := "2D"
 var cur_template := "platformer"
 var cur_project := ""
-var proj_list := []      # [{name,dim,template,path}]
+var proj_list := []
 var sel := 0
 
 # audio
 var sfx := {}
 var music_player: AudioStreamPlayer
 
-# machine à états des écrans (XSM) — voir scenes/game/Forge.tscn
+# template de jeu actif (le genre) + machine d'écrans (XSM)
+var tmpl: PlatformerTemplate = null
 @onready var states: State = $States
 
 
@@ -154,7 +90,10 @@ func _ready() -> void:
 	_compute_grid()
 	_build_audio()
 	DirAccess.make_dir_recursive_absolute(PROJ_DIR)
-	# l'écran initial (DimState) est activé par XSM ; voir states/*.gd
+	# instancie le template plateformer (rendu du monde + simulation + perso XSM)
+	tmpl = PLATFORMER_PLAY.instantiate()
+	add_child(tmpl)
+	tmpl.setup(self)
 	queue_redraw()
 	if OS.get_cmdline_args().has("--selftest"):
 		call_deferred("_self_test")
@@ -166,53 +105,34 @@ func _self_test() -> void:
 	cols = 24
 	grid.clear()
 	for x in range(cols):
-		grid[Vector2i(x, rows - 1)] = GROUND
-	# rampe 45° montante vers la droite (cols 6..10), avec remplissage Sol dessous
+		grid[Vector2i(x, rows - 1)] = tmpl.GROUND
 	for i in range(5):
-		grid[Vector2i(6 + i, rows - 2 - i)] = SLOPE_R
+		grid[Vector2i(6 + i, rows - 2 - i)] = tmpl.SLOPE_R
 		for fy in range(rows - 1 - i, rows - 1):
-			grid[Vector2i(6 + i, fy)] = GROUND
-	grid[Vector2i(2, rows - 2)] = SPAWN
-	testing = true
+			grid[Vector2i(6 + i, fy)] = tmpl.GROUND
+	grid[Vector2i(2, rows - 2)] = tmpl.SPAWN
+	tmpl.testing = true
+	mode = "play"
 	screen = "edit"
-	_start_play(false)
+	tmpl.start_play(false)
 	print("=== CLIMB (vers la droite, y doit DIMINUER) ===")
-	test_dir = 1
+	tmpl.test_dir = 1
 	for f in range(170):
-		_physics_process(dt)
+		tmpl._physics_process(dt)
 		if f % 17 == 0:
-			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, ppos.x, ppos.y, str(on_floor)])
+			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, tmpl.ppos.x, tmpl.ppos.y, str(tmpl.on_floor)])
 	print("=== DESCEND (vers la gauche, y doit AUGMENTER) ===")
-	test_dir = -1
+	tmpl.test_dir = -1
 	for f in range(170):
-		_physics_process(dt)
+		tmpl._physics_process(dt)
 		if f % 17 == 0:
-			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, ppos.x, ppos.y, str(on_floor)])
+			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, tmpl.ppos.x, tmpl.ppos.y, str(tmpl.on_floor)])
 	get_tree().quit()
 
 
 func _compute_grid() -> void:
 	var vp := get_viewport_rect().size
 	rows = max(6, int((vp.y - TOPBAR - BOTTOM) / CELL))
-
-
-func _seed_demo() -> void:
-	grid.clear()
-	for x in range(0, cols):
-		grid[Vector2i(x, rows - 1)] = GROUND
-	for x in range(8, 12):
-		grid[Vector2i(x, rows - 4)] = GROUND
-	for x in range(16, 19):
-		grid[Vector2i(x, rows - 6)] = GROUND
-	grid[Vector2i(2, rows - 2)] = SPAWN
-	grid[Vector2i(9, rows - 5)] = COIN
-	grid[Vector2i(10, rows - 5)] = COIN
-	grid[Vector2i(17, rows - 7)] = COIN
-	grid[Vector2i(13, rows - 2)] = ENEMY
-	grid[Vector2i(22, rows - 2)] = SPRING
-	grid[Vector2i(26, rows - 2)] = SPIKE
-	grid[Vector2i(cols - 2, rows - 2)] = GOAL
-	cursor = Vector2i(4, rows - 3)
 
 
 # ============================================================= AUDIO
@@ -268,7 +188,7 @@ func _tone(freqs: Array, dur: float, vol := 0.4, kind := "square") -> AudioStrea
 
 func _music_loop() -> AudioStreamWAV:
 	var rate := 22050
-	var notes := [392.0, 523.0, 392.0, 659.0]   # petite boucle douce
+	var notes := [392.0, 523.0, 392.0, 659.0]
 	var nlen := 0.4
 	var n := int(rate * nlen * notes.size())
 	var data := PackedByteArray()
@@ -323,7 +243,6 @@ func _unhandled_input(e: InputEvent) -> void:
 		_play_input(e)
 
 
-# ---------------- shell : navigation
 func _dim_input(e: InputEvent) -> void:
 	if _press(e, [KEY_LEFT, KEY_UP], [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_UP]):
 		sel = 0; queue_redraw()
@@ -335,7 +254,7 @@ func _dim_input(e: InputEvent) -> void:
 
 
 func _list_input(e: InputEvent) -> void:
-	var n := proj_list.size() + 1   # + "Nouveau projet"
+	var n := proj_list.size() + 1
 	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
 		sel = (sel + 1) % n; queue_redraw()
 	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
@@ -364,14 +283,12 @@ func _tmpl_input(e: InputEvent) -> void:
 
 
 func _edit_input(e: InputEvent) -> void:
-	# ouvrir menu
 	if _press(e, [KEY_ESCAPE], [JOY_BUTTON_BACK]):
 		_open_menu(); return
 	if sel_mode:
 		if _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]): _sel_click()
 		elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]): _sel_cancel()
 		return
-	# place / erase continus
 	if _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], true):
 		if not radial_open: _begin_stroke(true)
 		return
@@ -381,7 +298,6 @@ func _edit_input(e: InputEvent) -> void:
 		_begin_stroke(false); return
 	if _is_btn(e, [KEY_DELETE, KEY_D], [JOY_BUTTON_B], false):
 		erase_held = false; return
-	# discrets
 	if _press(e, [KEY_Z], [JOY_BUTTON_X]): _undo()
 	elif _press(e, [KEY_Y], [JOY_BUTTON_Y]): _redo()
 	elif _press(e, [KEY_BRACKETLEFT, KEY_A], [JOY_BUTTON_LEFT_SHOULDER]): _cycle(-1)
@@ -390,31 +306,32 @@ func _edit_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_T], [JOY_BUTTON_RIGHT_STICK]): _start_play(true)
 	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _toggle_cursor_mode()
 	elif e is InputEventKey and e.pressed and not e.echo and e.keycode >= KEY_1 and e.keycode <= KEY_9:
-		pal = clampi(e.keycode - KEY_1, 0, PALETTE.size() - 1); queue_redraw()
+		pal = clampi(e.keycode - KEY_1, 0, tmpl.palette().size() - 1); queue_redraw()
 
 
 func _play_input(e: InputEvent) -> void:
 	if _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
-		if not dead and not won: jbuf = JUMP_BUFFER
+		tmpl.jump_pressed()
 	elif _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], false):
-		if pvel.y < 0: pvel.y *= JUMP_CUT
+		tmpl.jump_released()
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_B]):
 		_stop_play()
 	elif _press(e, [KEY_R], [JOY_BUTTON_Y]):
-		_start_play(last_from_cursor)
+		tmpl.start_play(tmpl.last_from_cursor)
 
 
 func _begin_stroke(place: bool) -> void:
 	_push_undo()
 	if place:
-		place_held = true; grid[cursor] = PALETTE[pal]
+		place_held = true; grid[cursor] = tmpl.palette()[pal]
 	else:
 		erase_held = true; grid.erase(cursor)
 	queue_redraw()
 
 
 func _cycle(dir: int) -> void:
-	pal = (pal + dir + PALETTE.size()) % PALETTE.size(); queue_redraw()
+	var n := tmpl.palette().size()
+	pal = (pal + dir + n) % n; queue_redraw()
 
 
 func _toggle_cursor_mode() -> void:
@@ -516,7 +433,7 @@ func _new_project(template_id: String) -> void:
 	cols = LEVEL_COLS_DEF
 	bg_theme = 0
 	undo_stack.clear(); redo_stack.clear()
-	_seed_demo()
+	tmpl.seed_demo()
 	_save_current()
 	mode = "edit"
 	states.change_state("EditorState")
@@ -558,7 +475,7 @@ func _save_current() -> void:
 		_set_toast("Erreur sauvegarde")
 
 
-# ---------------- sélection / copier-coller (A7)
+# ---------------- sélection / copier-coller
 func _start_selection() -> void:
 	sel_mode = true; sel_anchor = Vector2i(-1, -1)
 	_set_toast("A: 1er coin puis 2e coin · B: annuler")
@@ -601,8 +518,6 @@ func _paste_clip() -> void:
 
 
 func _dir_held() -> Vector2i:
-	if testing:
-		return Vector2i(test_dir, 0)
 	var v := Vector2i.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_joy_button_pressed(0, JOY_BUTTON_DPAD_LEFT): v.x -= 1
 	if Input.is_key_pressed(KEY_RIGHT) or Input.is_joy_button_pressed(0, JOY_BUTTON_DPAD_RIGHT): v.x += 1
@@ -620,24 +535,19 @@ func _stick() -> Vector2:
 	return s if s.length() > DEADZONE else Vector2.ZERO
 
 
-# ============================================================= PROCESS
+# ============================================================= PROCESS (éditeur)
 func _process(delta: float) -> void:
 	_update_fx(delta)
 	if toast_t > 0.0:
 		toast_t -= delta
 		if toast_t <= 0.0: queue_redraw()
-	if screen != "edit":
-		return
-	if mode == "play":
-		queue_redraw()
+	if screen != "edit" or mode == "play":
 		return
 	if menu_open:
 		return
-	# dézoom
 	var peek := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_RIGHT) > 0.5 or Input.is_key_pressed(KEY_SHIFT)
 	if peek != dezoom:
 		dezoom = peek; queue_redraw()
-	# radial
 	var l2 := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_LEFT) > 0.5
 	if l2 and not radial_open:
 		radial_open = true; radial_pick = pal
@@ -647,11 +557,10 @@ func _process(delta: float) -> void:
 		var s := _stick()
 		if s.length() > 0.5:
 			var ang := atan2(s.y, s.x)
-			var n := PALETTE.size()
+			var n := tmpl.palette().size()
 			radial_pick = ((int(round((ang + PI / 2.0) / (TAU / n)))) % n + n) % n
 		queue_redraw()
 		return
-	# curseur
 	var d := _dir_held()
 	if d == Vector2i.ZERO:
 		cursor_cd = 0.0; hold_time = 0.0; last_dir = Vector2i.ZERO
@@ -666,8 +575,8 @@ func _process(delta: float) -> void:
 	if sel_mode:
 		queue_redraw()
 		return
-	if place_held and grid.get(cursor, EMPTY) != PALETTE[pal]:
-		grid[cursor] = PALETTE[pal]; queue_redraw()
+	if place_held and grid.get(cursor) != tmpl.palette()[pal]:
+		grid[cursor] = tmpl.palette()[pal]; queue_redraw()
 	elif erase_held and grid.has(cursor):
 		grid.erase(cursor); queue_redraw()
 
@@ -708,319 +617,20 @@ func _update_fx(delta: float) -> void:
 	queue_redraw()
 
 
-# ============================================================= PLAY
+# ============================================================= PLAY (délégué au template)
 func _start_play(from_cursor: bool) -> void:
-	last_from_cursor = from_cursor
-	if from_cursor:
-		spawn_cell = cursor
-	else:
-		spawn_cell = _find(SPAWN)
-		if spawn_cell == Vector2i(-1, -1): spawn_cell = cursor
-	respawn_cell = spawn_cell
-	coins_total = _count(COIN)
-	coins_got = 0
-	dead = false; won = false; death_t = 0.0; has_key = false
-	on_floor = false; was_floor = false; coyote_t = 0.0; jbuf = 0.0
-	# entités
-	enemies.clear(); plats.clear()
-	for k in grid:
-		if grid[k] == ENEMY:
-			enemies.append({"pos": Vector2(k.x * CELL + 6, k.y * CELL + (CELL - ESIZE)), "dir": -1, "alive": true, "vy": 0.0})
-		elif grid[k] == MOVPLAT:
-			plats.append({"pos": Vector2(k.x * CELL, k.y * CELL), "dir": 1, "min": float((k.x - 3) * CELL), "max": float((k.x + 3) * CELL)})
-	_place_player(spawn_cell)
+	tmpl.start_play(from_cursor)
 	mode = "play"
 	queue_redraw()
 
 
-func _place_player(c: Vector2i) -> void:
-	ppos = Vector2(c.x * CELL + (CELL - PSIZE.x) * 0.5, c.y * CELL + (CELL - PSIZE.y))
-	pvel = Vector2.ZERO
-
-
 func _stop_play() -> void:
-	mode = "edit"; Input.stop_joy_vibration(0)
-	if music_on: pass
+	mode = "edit"
+	tmpl.stop_play()
 	queue_redraw()
 
 
-func _physics_process(delta: float) -> void:
-	if screen != "edit" or mode != "play" or won:
-		return
-	if dead:
-		death_t -= delta
-		if death_t <= 0.0:
-			dead = false
-			_place_player(respawn_cell)
-		return
-
-	var dir := _dir_held()
-	var target := dir.x * SPEED
-	if dir.x != 0:
-		pvel.x = move_toward(pvel.x, target, (ACCEL_GROUND if on_floor else ACCEL_AIR) * delta)
-	else:
-		pvel.x = move_toward(pvel.x, 0.0, (FRICTION if on_floor else ACCEL_AIR) * delta)
-
-	coyote_t -= delta
-	jbuf -= delta
-	if jbuf > 0.0 and (on_floor or coyote_t > 0.0):
-		pvel.y = JUMP_V; jbuf = 0.0; coyote_t = 0.0; on_floor = false
-		squash = Vector2(0.78, 1.25)
-		Input.start_joy_vibration(0, 0.10, 0.25, 0.07); _play("jump")
-
-	pvel.y = min(pvel.y + GRAVITY * delta, MAX_FALL)
-
-	_move_plats(delta)
-	var rects := _solid_rects()
-	was_floor = on_floor
-	on_floor = false
-	var head_hit := false
-
-	# X : déplace, cale sur la rampe (montée), PUIS collision murs pleins
-	# (l'ordre fait que le remplissage sous la pente ne bloque pas)
-	ppos.x += pvel.x * delta
-	ppos.x = clampf(ppos.x, 0, cols * CELL - PSIZE.x)
-	_slope_snap()
-	for r in rects:
-		var pr := Rect2(ppos, PSIZE)
-		if pr.intersects(r):
-			if pvel.x > 0: ppos.x = r.position.x - PSIZE.x
-			elif pvel.x < 0: ppos.x = r.position.x + r.size.x
-			pvel.x = 0
-
-	# Y : gravité + collision sol/plafond pleins
-	ppos.y += pvel.y * delta
-	for r in rects:
-		var pr := Rect2(ppos, PSIZE)
-		if pr.intersects(r):
-			if pvel.y > 0: ppos.y = r.position.y - PSIZE.y; on_floor = true
-			elif pvel.y < 0: ppos.y = r.position.y + r.size.y; head_hit = true
-			pvel.y = 0
-
-	# pente : coller en descente (évite le rollback / saut de marche)
-	_slope_snap()
-
-	if head_hit: _hit_head()
-	if on_floor: coyote_t = COYOTE
-	if on_floor and not was_floor:
-		squash = Vector2(1.28, 0.72)
-		_emit(ppos + Vector2(PSIZE.x * 0.5, PSIZE.y), 6, Color("c8b89a"), 120.0, 0.30, true, 3.0)
-		Input.start_joy_vibration(0, 0.0, 0.30, 0.05)
-
-	_carry_on_plat(delta)
-	_update_enemies(delta)
-	if ppos.y > rows * CELL + 200: _die()
-	_interactions()
-	queue_redraw()
-
-
-func _move_plats(delta: float) -> void:
-	for p in plats:
-		p.pos.x += p.dir * 90.0 * delta
-		if p.pos.x <= p.min: p.pos.x = p.min; p.dir = 1
-		elif p.pos.x >= p.max: p.pos.x = p.max; p.dir = -1
-
-
-func _carry_on_plat(delta: float) -> void:
-	var feet := Rect2(ppos + Vector2(2, PSIZE.y - 2), Vector2(PSIZE.x - 4, 6))
-	for p in plats:
-		if feet.intersects(Rect2(p.pos, Vector2(CELL, 14))):
-			ppos.x += p.dir * 90.0 * delta
-
-
-func _solid_rects() -> Array:
-	var out := []
-	for c in _cells(Rect2(ppos - Vector2(CELL, CELL), PSIZE + Vector2(CELL, CELL) * 2)):
-		var t: int = grid.get(c, EMPTY)
-		# une case sous une pente = remplissage visuel → non solide (la pente gère)
-		if (t == GROUND or t == BREAKABLE or t == DOOR) and not _under_slope(c):
-			out.append(_cell_rect(c))
-	for p in plats:
-		out.append(Rect2(p.pos, Vector2(CELL, 14)))
-	return out
-
-
-func _hit_head() -> void:
-	# casser un bloc cassable touché par le dessus de la tête
-	var head := Vector2i(int((ppos.x + PSIZE.x * 0.5) / CELL), int((ppos.y - 2) / CELL))
-	if grid.get(head, EMPTY) == BREAKABLE:
-		grid.erase(head)
-		_emit(_cell_center(head), 12, COLORS[BREAKABLE], 220.0, 0.45, true, 4.0)
-		_shake(6.0, 0.18); _play("break")
-
-
-func _update_enemies(delta: float) -> void:
-	var pr := Rect2(ppos, PSIZE)
-	for en in enemies:
-		if not en.alive: continue
-		# gravité + pose sur le sol
-		en.vy = min(en.vy + GRAVITY * delta, MAX_FALL)
-		en.pos.y += en.vy * delta
-		var grounded := false
-		for cx in [int(en.pos.x / CELL), int((en.pos.x + ESIZE - 1) / CELL)]:
-			var fc := Vector2i(cx, int((en.pos.y + ESIZE) / CELL))
-			if _solid_tile(fc):
-				en.pos.y = fc.y * CELL - ESIZE; en.vy = 0.0; grounded = true
-		# patrouille : demi-tour au mur ou au bord du vide (seulement si au sol)
-		var nx: float = en.pos.x + en.dir * ESPEED * delta
-		var front_col := int((nx + (ESIZE if en.dir > 0 else 0)) / CELL)
-		var foot_row := int((en.pos.y + ESIZE - 1) / CELL)
-		var wall := _solid_tile(Vector2i(front_col, foot_row))
-		var edge := grounded and not _solid_tile(Vector2i(front_col, foot_row + 1))
-		if wall or edge:
-			en.dir = -en.dir
-		else:
-			en.pos.x = nx
-		en.pos.x = clampf(en.pos.x, 0, cols * CELL - ESIZE)
-		# collision joueur
-		var er := Rect2(en.pos, Vector2(ESIZE, ESIZE))
-		if pr.intersects(er):
-			if pvel.y > 0 and (ppos.y + PSIZE.y) - en.pos.y < 22:
-				en.alive = false
-				pvel.y = STOMP_BOUNCE
-				_emit(er.position + Vector2(ESIZE, ESIZE) * 0.5, 10, COLORS[ENEMY], 200.0, 0.4, true, 4.0)
-				_shake(4.0, 0.12); _play("stomp")
-			else:
-				_die()
-
-
-func _solid_tile(c: Vector2i) -> bool:
-	var t: int = grid.get(c, EMPTY)
-	return t == GROUND or t == BREAKABLE or t == DOOR
-
-
-func _is_slope(t: int) -> bool:
-	return SLOPES.has(t)
-
-
-# une case est "sous une pente" si, en remontant sa colonne sur des cases pleines
-# contiguës, on atteint une tuile pente (= remplissage visuel sous la rampe)
-func _under_slope(c: Vector2i) -> bool:
-	var y := c.y - 1
-	while y >= 0:
-		var t: int = grid.get(Vector2i(c.x, y), EMPTY)
-		if t == EMPTY: return false
-		if _is_slope(t): return true
-		y -= 1
-	return false
-
-
-# hauteur de la surface (y écran) d'une tuile pente, à la position x locale [0..CELL]
-func _slope_surface(t: int, c: Vector2i, lx: float) -> float:
-	var top := float(c.y * CELL)
-	var bot := float((c.y + 1) * CELL)
-	match t:
-		SLOPE_R: return bot - lx                      # 45° monte vers la droite
-		SLOPE_L: return top + lx                       # 45° monte vers la gauche
-		GSL_R_LO: return bot - lx * 0.5                # 26.5° ↗ moitié basse
-		GSL_R_HI: return bot - CELL * 0.5 - lx * 0.5   # 26.5° ↗ moitié haute
-		GSL_L_HI: return top + lx * 0.5                # 26.5° ↖ moitié haute (gauche)
-		GSL_L_LO: return top + CELL * 0.5 + lx * 0.5   # 26.5° ↖ moitié basse (droite)
-	return INF
-
-
-# cale le joueur sur la surface d'une pente (montée ou descente)
-func _slope_snap() -> void:
-	if pvel.y < 0: return    # en montée de saut : ne pas coller
-	var sy := _slope_ground(ppos.x + PSIZE.x * 0.5)
-	if sy == INF: return
-	var feet := ppos.y + PSIZE.y
-	if feet >= sy - SLOPE_SNAP_DOWN and feet <= sy + SLOPE_SNAP_UP:
-		ppos.y = sy - PSIZE.y
-		pvel.y = 0.0
-		on_floor = true
-
-
-# y de sol sous le joueur s'il est sur une pente, sinon INF
-func _slope_ground(footx: float) -> float:
-	var col := int(footx / CELL)
-	var lx := footx - col * CELL
-	var foot_row := int((ppos.y + PSIZE.y) / CELL)
-	var best := INF
-	for dy in [-1, 0, 1]:
-		var c := Vector2i(col, foot_row + dy)
-		var t: int = grid.get(c, EMPTY)
-		if _is_slope(t):
-			var sy := _slope_surface(t, c, lx)
-			if sy >= c.y * CELL - 2 and sy <= (c.y + 1) * CELL + 2:
-				if best == INF or sy < best: best = sy
-	return best
-
-
-func _die() -> void:
-	if dead: return
-	dead = true; death_t = 0.7
-	_emit(ppos + PSIZE * 0.5, 16, Color("ecf0f1"), 260.0, 0.5, true, 4.0)
-	_shake(9.0, 0.30)
-	Input.start_joy_vibration(0, 0.6, 0.7, 0.30); _play("death")
-
-
-func _interactions() -> void:
-	for c in _cells(Rect2(ppos, PSIZE)):
-		match grid.get(c, EMPTY):
-			COIN:
-				grid.erase(c); coins_got += 1
-				_emit(_cell_center(c), 8, COLORS[COIN], 160.0, 0.35, false, 3.0)
-				Input.start_joy_vibration(0, 0.25, 0.0, 0.04); _play("coin")
-			KEY:
-				grid.erase(c); has_key = true
-				_emit(_cell_center(c), 10, COLORS[KEY], 180.0, 0.4, false, 3.0)
-				_play("key")
-			SPIKE:
-				_die()
-			SPRING:
-				if pvel.y >= 0:
-					pvel.y = SPRING_V; jbuf = 0.0
-					squash = Vector2(0.7, 1.35)
-					_emit(_cell_center(c), 8, COLORS[SPRING], 220.0, 0.35, false, 3.0)
-					_shake(3.0, 0.1); _play("spring")
-			GOAL:
-				if not won:
-					won = true
-					_emit(_cell_center(c), 24, COLORS[GOAL], 240.0, 0.7, false, 4.0)
-					_play("win")
-	# porte : s'ouvre au contact si on a une clé (consomme la clé)
-	if has_key:
-		for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
-			if grid.get(c, EMPTY) == DOOR:
-				grid.erase(c); has_key = false
-				_emit(_cell_center(c), 14, COLORS[DOOR], 200.0, 0.45, true, 4.0)
-				_play("key"); _shake(3.0, 0.1)
-				break
-
-
-# ============================================================= HELPERS
-func _cell_rect(c: Vector2i) -> Rect2:
-	return Rect2(Vector2(c.x * CELL, c.y * CELL), Vector2(CELL, CELL))
-
-
-func _cell_center(c: Vector2i) -> Vector2:
-	return Vector2(c.x * CELL + CELL * 0.5, c.y * CELL + CELL * 0.5)
-
-
-func _cells(r: Rect2) -> Array:
-	var out := []
-	var x0 := int(floor(r.position.x / CELL)); var x1 := int(floor((r.position.x + r.size.x - 1) / CELL))
-	var y0 := int(floor(r.position.y / CELL)); var y1 := int(floor((r.position.y + r.size.y - 1) / CELL))
-	for y in range(y0, y1 + 1):
-		for x in range(x0, x1 + 1):
-			out.append(Vector2i(x, y))
-	return out
-
-
-func _find(t: int) -> Vector2i:
-	for k in grid:
-		if grid[k] == t: return k
-	return Vector2i(-1, -1)
-
-
-func _count(t: int) -> int:
-	var n := 0
-	for k in grid:
-		if grid[k] == t: n += 1
-	return n
-
-
+# ============================================================= VUE (utilisée par le template)
 func _w2s(wp: Vector2) -> Vector2:
 	return view_origin + wp * view_scale
 
@@ -1031,7 +641,7 @@ func _compute_view() -> void:
 	var lvl := Vector2(cols * CELL, rows * CELL)
 	if mode == "play":
 		view_scale = 1.0
-		view_origin = area.position + area.size * 0.5 - (ppos + PSIZE * 0.5) * view_scale
+		view_origin = area.position + area.size * 0.5 - (tmpl.ppos + tmpl.PSIZE * 0.5) * view_scale
 	elif dezoom:
 		view_scale = min(area.size.x / lvl.x, area.size.y / lvl.y) * 0.96
 		view_origin = area.position
@@ -1047,150 +657,40 @@ func _compute_view() -> void:
 		view_origin += Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake_mag
 
 
-# ============================================================= DRAW
+# ============================================================= DRAW (chrome uniquement ; le monde = template)
 func _draw() -> void:
 	var vp := get_viewport_rect().size
 	if screen == "dim": _draw_dim(vp); return
 	if screen == "list": _draw_list(vp); return
 	if screen == "template": _draw_template(vp); return
-	_compute_view()
-	var th: Array = BG_THEMES[bg_theme]
-	draw_rect(Rect2(Vector2.ZERO, vp), th[0])
-	var lvl := Vector2(cols * CELL, rows * CELL)
-	draw_rect(Rect2(_w2s(Vector2.ZERO), lvl * view_scale), th[1])
-
-	if mode == "edit" and not dezoom:
-		var gcol := Color(1, 1, 1, 0.06)
-		for x in range(cols + 1):
-			draw_line(_w2s(Vector2(x * CELL, 0)), _w2s(Vector2(x * CELL, rows * CELL)), gcol)
-		for y in range(rows + 1):
-			draw_line(_w2s(Vector2(0, y * CELL)), _w2s(Vector2(cols * CELL, y * CELL)), gcol)
-
-	for k in grid:
-		# en jeu, ennemis et plateformes sont des entités (pas la tuile statique)
-		if mode == "play" and (grid[k] == ENEMY or grid[k] == MOVPLAT):
-			continue
-		_draw_tile(_w2s(Vector2(k.x * CELL, k.y * CELL)), grid[k], view_scale)
-
-	# particules
-	for p in particles:
-		var a: float = clampf(p.life / p.max, 0.0, 1.0)
-		var c: Color = p.col; c.a = a
-		draw_circle(_w2s(p.pos), p.size * view_scale, c)
-
-	if mode == "edit":
-		# sélection en cours
-		if sel_mode and sel_anchor != Vector2i(-1, -1):
-			var x0 := mini(sel_anchor.x, cursor.x); var y0 := mini(sel_anchor.y, cursor.y)
-			var x1 := maxi(sel_anchor.x, cursor.x); var y1 := maxi(sel_anchor.y, cursor.y)
-			var rr := Rect2(_w2s(Vector2(x0 * CELL, y0 * CELL)), Vector2((x1 - x0 + 1) * CELL, (y1 - y0 + 1) * CELL) * view_scale)
-			draw_rect(rr, Color(0.2, 0.8, 1, 0.18)); draw_rect(rr, Color("3498db"), false, 2.0)
-		var cp := _w2s(Vector2(cursor.x * CELL, cursor.y * CELL))
-		if not sel_mode:
-			_draw_tile(cp, PALETTE[pal], view_scale, 0.45)
-		var cc := Color("3498db") if sel_mode else (Color.WHITE if cursor_mode == "rapide" else Color("f39c12"))
-		draw_rect(Rect2(cp, Vector2(CELL, CELL) * view_scale), cc, false, 3.0)
-
-	# entités jeu
-	if mode == "play":
-		for p in plats:
-			_draw_tile(_w2s(p.pos), MOVPLAT, view_scale)
-		for en in enemies:
-			if en.alive:
-				_draw_tile(_w2s(en.pos - Vector2(6, 6)), ENEMY, view_scale)
-		var ps := PSIZE * squash
-		var anchor := _w2s(ppos + Vector2(PSIZE.x * 0.5, PSIZE.y))
-		var pr := Rect2(anchor - Vector2(ps.x * 0.5, ps.y) * view_scale, ps * view_scale)
-		draw_rect(pr, Color("ffffff")); draw_rect(pr, Color("2c3e50"), false, 2.0)
-		if has_key:
-			draw_circle(pr.position + Vector2(pr.size.x * 0.5, -8), 5, COLORS[KEY])
-
+	# édition/jeu : le monde est rendu par le template (derrière), ici le chrome par-dessus
 	_draw_topbar(vp)
 	_draw_hints(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
 	if toast_t > 0.0: _draw_toast(vp)
-	if mode == "play" and (dead or won): _draw_banner(vp)
-
-
-func _draw_tile(p: Vector2, t: int, scale := 1.0, alpha := 1.0) -> void:
-	var col: Color = COLORS.get(t, Color.GRAY); col.a = alpha
-	var cs := CELL * scale
-	var pad := 3.0 * scale
-	match t:
-		COIN:
-			draw_circle(p + Vector2(cs, cs) * 0.5, cs * 0.3, col)
-		KEY:
-			draw_circle(p + Vector2(cs * 0.4, cs * 0.4), cs * 0.18, col)
-			draw_rect(Rect2(p + Vector2(cs * 0.4, cs * 0.4), Vector2(cs * 0.32, cs * 0.1)), col)
-		ENEMY:
-			draw_colored_polygon(PackedVector2Array([
-				p + Vector2(cs * 0.5, pad), p + Vector2(cs - pad, cs - pad), p + Vector2(pad, cs - pad)]), col)
-		SPIKE:
-			for i in 3:
-				var bx := p.x + pad + i * (cs - pad * 2) / 3.0
-				var bw := (cs - pad * 2) / 3.0
-				draw_colored_polygon(PackedVector2Array([
-					Vector2(bx, p.y + cs - pad), Vector2(bx + bw * 0.5, p.y + pad), Vector2(bx + bw, p.y + cs - pad)]), col)
-		SPRING:
-			draw_rect(Rect2(p + Vector2(pad, cs * 0.55), Vector2(cs - pad * 2, cs * 0.45 - pad)), col)
-			draw_colored_polygon(PackedVector2Array([
-				p + Vector2(cs * 0.5, pad), p + Vector2(cs * 0.75, cs * 0.5), p + Vector2(cs * 0.25, cs * 0.5)]), col.lightened(0.2))
-		GOAL:
-			draw_rect(Rect2(p + Vector2(cs * 0.4, pad), Vector2(4 * scale, cs - pad * 2)), col)
-			draw_rect(Rect2(p + Vector2(cs * 0.4 + 4 * scale, pad), Vector2(cs * 0.4, cs * 0.3)), col)
-		CHECKPOINT:
-			draw_rect(Rect2(p + Vector2(cs * 0.4, pad), Vector2(4 * scale, cs - pad * 2)), col)
-			draw_rect(Rect2(p + Vector2(cs * 0.4 + 4 * scale, pad), Vector2(cs * 0.35, cs * 0.28)), col)
-		SPAWN:
-			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col, false, 3.0)
-		DOOR:
-			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad)), col)
-			draw_circle(p + Vector2(cs * 0.72, cs * 0.5), cs * 0.06, Color("f1c40f"))
-		MOVPLAT:
-			draw_rect(Rect2(p + Vector2(0, cs * 0.2), Vector2(cs, cs * 0.35)), col)
-		GROUND:
-			draw_rect(Rect2(p, Vector2(cs, cs)), col)
-			var top: Color = col.lightened(0.12); top.a = col.a
-			draw_rect(Rect2(p, Vector2(cs, max(2.0, cs * 0.10))), top)
-		BREAKABLE:
-			draw_rect(Rect2(p, Vector2(cs, cs)), col)
-			draw_line(p + Vector2(0, cs * 0.5), p + Vector2(cs, cs * 0.5), col.darkened(0.3), 1.5)
-			draw_line(p + Vector2(cs * 0.5, 0), p + Vector2(cs * 0.5, cs), col.darkened(0.3), 1.5)
-		SLOPE_R:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, 0)]), col)
-		SLOPE_L:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, 0), p + Vector2(0, cs), p + Vector2(cs, cs)]), col)
-		GSL_R_LO:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, cs * 0.5)]), col)
-		GSL_R_HI:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, 0), p + Vector2(0, cs * 0.5)]), col)
-		GSL_L_HI:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, 0), p + Vector2(0, cs), p + Vector2(cs, cs), p + Vector2(cs, cs * 0.5)]), col)
-		GSL_L_LO:
-			draw_colored_polygon(PackedVector2Array([p + Vector2(0, cs * 0.5), p + Vector2(0, cs), p + Vector2(cs, cs)]), col)
-		_:
-			draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col)
+	if mode == "play" and tmpl.won: _draw_banner(vp)
 
 
 func _draw_topbar(vp: Vector2) -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, TOPBAR)), Color("11161f"))
 	var f := ThemeDB.fallback_font
+	var palette: Array = tmpl.palette()
 	if mode == "edit":
 		_text(f, Vector2(12, 32), "FORGE", Color("f39c12"), 20)
 		var x := 96.0
-		for i in PALETTE.size():
+		for i in palette.size():
 			var box := Rect2(Vector2(x, 9), Vector2(34, 34))
 			draw_rect(box, Color("223349"))
-			_draw_tile(Vector2(x, 9), PALETTE[i], 34.0 / CELL)
+			tmpl.draw_tile(self, Vector2(x, 9), palette[i], 34.0 / CELL)
 			if i == pal: draw_rect(box, Color.WHITE, false, 3.0)
 			x += 44
-		_text(f, Vector2(x + 8, 22), NAMES[PALETTE[pal]], Color("f39c12"), 14)
+		_text(f, Vector2(x + 8, 22), tmpl.tile_name(palette[pal]), Color("f39c12"), 14)
 		_text(f, Vector2(x + 8, 42), "Curseur: %s" % cursor_mode, Color(1, 1, 1, 0.6), 12)
 	else:
 		_text(f, Vector2(16, 34), "FORGE — TEST", Color("2ecc71"), 22)
-		_text(f, Vector2(240, 34), "Pièces: %d/%d" % [coins_got, coins_total], Color("f1c40f"), 20)
-		if has_key: _text(f, Vector2(430, 34), "🔑", Color("f1c40f"), 20)
+		_text(f, Vector2(240, 34), "Pièces: %d/%d" % [tmpl.coins_got, tmpl.coins_total], Color("f1c40f"), 20)
+		if tmpl.has_key: _text(f, Vector2(430, 34), "🔑", Color("f1c40f"), 20)
 
 
 func _draw_hints(vp: Vector2) -> void:
@@ -1233,17 +733,18 @@ func _draw_radial(vp: Vector2) -> void:
 	var rad := 140.0
 	draw_circle(c, rad + 44, Color(0, 0, 0, 0.55))
 	var f := ThemeDB.fallback_font
-	var n := PALETTE.size()
+	var palette: Array = tmpl.palette()
+	var n := palette.size()
 	for i in n:
 		var ang := -PI / 2.0 + i * TAU / n
 		var p := c + Vector2(cos(ang), sin(ang)) * rad
-		var sel: bool = i == radial_pick
+		var is_sel: bool = i == radial_pick
 		var box := Rect2(p - Vector2(22, 22), Vector2(44, 44))
 		draw_rect(box, Color("223349"))
-		_draw_tile(p - Vector2(22, 22), PALETTE[i], 44.0 / CELL)
-		if sel:
+		tmpl.draw_tile(self, p - Vector2(22, 22), palette[i], 44.0 / CELL)
+		if is_sel:
 			draw_rect(box, Color.WHITE, false, 4.0)
-			_text(f, c + Vector2(-NAMES[PALETTE[i]].length() * 4.0, 5), NAMES[PALETTE[i]], Color.WHITE, 16)
+			_text(f, c + Vector2(-tmpl.tile_name(palette[i]).length() * 4.0, 5), tmpl.tile_name(palette[i]), Color.WHITE, 16)
 
 
 func _draw_menu(vp: Vector2) -> void:
@@ -1272,12 +773,10 @@ func _draw_toast(vp: Vector2) -> void:
 
 func _draw_banner(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
-	var msg := "GAGNÉ !" if won else ""
-	if not won: return
 	var col := Color("2ecc71")
 	var box := Rect2(vp * 0.5 - Vector2(200, 70), Vector2(400, 140))
 	draw_rect(box, Color(0, 0, 0, 0.7)); draw_rect(box, col, false, 3.0)
-	_text(f, vp * 0.5 - Vector2(80, 10), msg, col, 40)
+	_text(f, vp * 0.5 - Vector2(80, 10), "GAGNÉ !", col, 40)
 	_text(f, vp * 0.5 + Vector2(-130, 40), "Y: Rejouer   Start/B: Éditeur", Color.WHITE, 16)
 
 
