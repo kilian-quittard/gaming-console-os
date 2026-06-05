@@ -9,6 +9,11 @@ const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
 const PSIZE := Vector2(36, 36)
 const SAVE_PATH := "user://forge_level.json"
+const PROJ_DIR := "user://forge_projects/"
+const TEMPLATES := {
+	"2D": [{"id": "platformer", "name": "Plateformer"}],
+	"3D": []
+}
 
 # physique
 const GRAVITY := 1900.0
@@ -128,6 +133,14 @@ var plats := []          # {pos:Vector2, dir:int, min:float, max:float}
 var testing := false
 var test_dir := 0
 
+# shell (écrans hors éditeur)
+var screen := "dim"      # "dim" | "list" | "template" | "edit"
+var cur_dim := "2D"
+var cur_template := "platformer"
+var cur_project := ""
+var proj_list := []      # [{name,dim,template,path}]
+var sel := 0
+
 # audio
 var sfx := {}
 var music_player: AudioStreamPlayer
@@ -137,7 +150,9 @@ func _ready() -> void:
 	get_window().min_size = Vector2i(960, 600)
 	_compute_grid()
 	_build_audio()
-	_seed_demo()
+	DirAccess.make_dir_recursive_absolute(PROJ_DIR)
+	screen = "dim"
+	sel = 0
 	queue_redraw()
 	if OS.get_cmdline_args().has("--selftest"):
 		call_deferred("_self_test")
@@ -157,6 +172,7 @@ func _self_test() -> void:
 			grid[Vector2i(6 + i, fy)] = GROUND
 	grid[Vector2i(2, rows - 2)] = SPAWN
 	testing = true
+	screen = "edit"
 	_start_play(false)
 	print("=== CLIMB (vers la droite, y doit DIMINUER) ===")
 	test_dir = 1
@@ -291,12 +307,58 @@ func _is_btn(e: InputEvent, keys: Array, btns: Array, pressed: bool) -> bool:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	if screen == "dim":
+		_dim_input(e); return
+	if screen == "list":
+		_list_input(e); return
+	if screen == "template":
+		_tmpl_input(e); return
 	if menu_open:
 		_menu_input(e); return
 	if mode == "edit":
 		_edit_input(e)
 	else:
 		_play_input(e)
+
+
+# ---------------- shell : navigation
+func _dim_input(e: InputEvent) -> void:
+	if _press(e, [KEY_LEFT, KEY_UP], [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_UP]):
+		sel = 0; queue_redraw()
+	elif _press(e, [KEY_RIGHT, KEY_DOWN], [JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_DPAD_DOWN]):
+		sel = 1; queue_redraw()
+	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+		cur_dim = "2D" if sel == 0 else "3D"
+		_scan_projects(cur_dim); screen = "list"; sel = 0; queue_redraw()
+
+
+func _list_input(e: InputEvent) -> void:
+	var n := proj_list.size() + 1   # + "Nouveau projet"
+	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		sel = (sel + 1) % n; queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		sel = (sel - 1 + n) % n; queue_redraw()
+	elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+		screen = "dim"; sel = (0 if cur_dim == "2D" else 1); queue_redraw()
+	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+		if sel < proj_list.size():
+			_open_project(proj_list[sel])
+		else:
+			screen = "template"; sel = 0; queue_redraw()
+
+
+func _tmpl_input(e: InputEvent) -> void:
+	var list: Array = TEMPLATES.get(cur_dim, [])
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+		screen = "list"; sel = 0; queue_redraw()
+	elif list.is_empty():
+		return
+	elif _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		sel = (sel + 1) % list.size(); queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		sel = (sel - 1 + list.size()) % list.size(); queue_redraw()
+	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+		_new_project(String(list[sel]["id"]))
 
 
 func _edit_input(e: InputEvent) -> void:
@@ -379,8 +441,9 @@ func _redo() -> void:
 # ---------------- menu éditeur
 func _open_menu() -> void:
 	menu_open = true; menu_idx = 0
-	menu_items = ["Sauvegarder", "Charger", "Copier zone", "Coller ici", "Vider niveau",
-		"Largeur +", "Largeur -", "Fond suivant", "Musique: %s" % ("ON" if music_on else "OFF"), "Fermer"]
+	menu_items = ["Sauvegarder", "Copier zone", "Coller ici", "Vider niveau",
+		"Largeur +", "Largeur -", "Fond suivant", "Musique: %s" % ("ON" if music_on else "OFF"),
+		"Projets (quitter)", "Fermer"]
 	queue_redraw()
 
 
@@ -397,20 +460,17 @@ func _menu_input(e: InputEvent) -> void:
 
 func _menu_select() -> void:
 	match menu_idx:
-		0: _save_level()
-		1: _load_level()
-		2: _start_selection()
-		3: _paste_clip()
-		4: _push_undo(); grid.clear(); _set_toast("Niveau vidé")
-		5: cols = min(cols + 5, 80); _set_toast("Largeur: %d" % cols)
-		6: cols = max(cols - 5, 16); cursor.x = min(cursor.x, cols - 1); _set_toast("Largeur: %d" % cols)
-		7: bg_theme = (bg_theme + 1) % BG_THEMES.size(); _set_toast("Fond #%d" % (bg_theme + 1))
-		8: _toggle_music()
+		0: _save_current()
+		1: _start_selection()
+		2: _paste_clip()
+		3: _push_undo(); grid.clear(); _set_toast("Niveau vidé")
+		4: cols = min(cols + 5, 80); _set_toast("Largeur: %d" % cols)
+		5: cols = max(cols - 5, 16); cursor.x = min(cursor.x, cols - 1); _set_toast("Largeur: %d" % cols)
+		6: bg_theme = (bg_theme + 1) % BG_THEMES.size(); _set_toast("Fond #%d" % (bg_theme + 1))
+		7: _toggle_music()
+		8: _save_current(); screen = "list"; _scan_projects(cur_dim); sel = 0
 		9: pass
-	if menu_idx != 2 and menu_idx != 3:
-		menu_open = false
-	else:
-		menu_open = false   # sélection/coller : on ferme et on agit dans l'éditeur
+	menu_open = false
 	queue_redraw()
 
 
@@ -425,35 +485,75 @@ func _set_toast(s: String) -> void:
 	toast = s; toast_t = 2.0; queue_redraw()
 
 
-# ---------------- sauvegarde
-func _save_level() -> void:
-	var d := {"cols": cols, "rows": rows, "bg": bg_theme, "tiles": {}}
+# ---------------- projets
+func _proj_path(name: String) -> String:
+	return PROJ_DIR + name.replace(" ", "_") + ".json"
+
+
+func _scan_projects(dim: String) -> void:
+	proj_list.clear()
+	var d := DirAccess.open(PROJ_DIR)
+	if d == null: return
+	for fn in d.get_files():
+		if not fn.ends_with(".json"): continue
+		var fa := FileAccess.open(PROJ_DIR + fn, FileAccess.READ)
+		if fa == null: continue
+		var data = JSON.parse_string(fa.get_as_text())
+		fa.close()
+		if typeof(data) == TYPE_DICTIONARY and String(data.get("dim", "2D")) == dim:
+			proj_list.append({"name": String(data.get("name", fn)), "dim": dim,
+				"template": String(data.get("template", "platformer")), "path": PROJ_DIR + fn})
+
+
+func _new_project(template_id: String) -> void:
+	cur_template = template_id
+	var base := "Plateformer"
+	var i := 1
+	while FileAccess.file_exists(_proj_path("%s %d" % [base, i])): i += 1
+	cur_project = "%s %d" % [base, i]
+	cols = LEVEL_COLS_DEF
+	bg_theme = 0
+	undo_stack.clear(); redo_stack.clear()
+	_seed_demo()
+	_save_current()
+	screen = "edit"; mode = "edit"
+	queue_redraw()
+
+
+func _open_project(p: Dictionary) -> void:
+	cur_dim = String(p.get("dim", "2D"))
+	cur_template = String(p.get("template", "platformer"))
+	cur_project = String(p.get("name", ""))
+	var fa := FileAccess.open(String(p.get("path", "")), FileAccess.READ)
+	if fa == null:
+		_set_toast("Ouverture impossible"); return
+	var data = JSON.parse_string(fa.get_as_text())
+	fa.close()
+	cols = int(data.get("cols", LEVEL_COLS_DEF))
+	bg_theme = int(data.get("bg", 0)) % BG_THEMES.size()
+	grid.clear()
+	for k in data.get("tiles", {}):
+		var parts: PackedStringArray = String(k).split(",")
+		grid[Vector2i(int(parts[0]), int(parts[1]))] = int(data["tiles"][k])
+	undo_stack.clear(); redo_stack.clear()
+	cursor = Vector2i(4, rows - 3)
+	screen = "edit"; mode = "edit"
+	queue_redraw()
+
+
+func _save_current() -> void:
+	if cur_project == "":
+		cur_project = "Plateformer 1"
+	var d := {"name": cur_project, "dim": cur_dim, "template": cur_template,
+		"cols": cols, "bg": bg_theme, "tiles": {}}
 	for k in grid:
 		d["tiles"]["%d,%d" % [k.x, k.y]] = grid[k]
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(_proj_path(cur_project), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d)); f.close()
-		_set_toast("Sauvegardé ✓")
+		_set_toast("Sauvegardé : %s" % cur_project)
 	else:
 		_set_toast("Erreur sauvegarde")
-
-
-func _load_level() -> void:
-	if not FileAccess.file_exists(SAVE_PATH):
-		_set_toast("Aucune sauvegarde"); return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	var d = JSON.parse_string(f.get_as_text())
-	f.close()
-	if typeof(d) != TYPE_DICTIONARY:
-		_set_toast("Sauvegarde invalide"); return
-	_push_undo()
-	cols = int(d.get("cols", LEVEL_COLS_DEF))
-	bg_theme = int(d.get("bg", 0)) % BG_THEMES.size()
-	grid.clear()
-	for k in d.get("tiles", {}):
-		var parts: PackedStringArray = String(k).split(",")
-		grid[Vector2i(int(parts[0]), int(parts[1]))] = int(d["tiles"][k])
-	_set_toast("Chargé ✓")
 
 
 # ---------------- sélection / copier-coller (A7)
@@ -524,6 +624,8 @@ func _process(delta: float) -> void:
 	if toast_t > 0.0:
 		toast_t -= delta
 		if toast_t <= 0.0: queue_redraw()
+	if screen != "edit":
+		return
 	if mode == "play":
 		queue_redraw()
 		return
@@ -641,7 +743,7 @@ func _stop_play() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if mode != "play" or won:
+	if screen != "edit" or mode != "play" or won:
 		return
 	if dead:
 		death_t -= delta
@@ -946,6 +1048,9 @@ func _compute_view() -> void:
 # ============================================================= DRAW
 func _draw() -> void:
 	var vp := get_viewport_rect().size
+	if screen == "dim": _draw_dim(vp); return
+	if screen == "list": _draw_list(vp); return
+	if screen == "template": _draw_template(vp); return
 	_compute_view()
 	var th: Array = BG_THEMES[bg_theme]
 	draw_rect(Rect2(Vector2.ZERO, vp), th[0])
@@ -1176,3 +1281,69 @@ func _draw_banner(vp: Vector2) -> void:
 
 func _text(f: Font, pos: Vector2, s: String, col: Color, size: int) -> void:
 	draw_string(f, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+
+
+func _ctext(f: Font, cx: float, y: float, s: String, col: Color, size: int) -> void:
+	var w := f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	draw_string(f, Vector2(cx - w * 0.5, y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+
+
+func _shell_bg(vp: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, vp), Color("1b2838"))
+	var f := ThemeDB.fallback_font
+	_ctext(f, vp.x * 0.5, 90, "FORGE", Color("f39c12"), 56)
+
+
+func _draw_dim(vp: Vector2) -> void:
+	_shell_bg(vp)
+	var f := ThemeDB.fallback_font
+	_ctext(f, vp.x * 0.5, 150, "Choisis un type de création", Color(1, 1, 1, 0.7), 20)
+	var opts := ["2D", "3D"]
+	var bw := 220.0; var bh := 160.0; var gap := 40.0
+	var x0 := vp.x * 0.5 - bw - gap * 0.5
+	for i in 2:
+		var bx := x0 + i * (bw + gap)
+		var box := Rect2(Vector2(bx, vp.y * 0.5 - bh * 0.5), Vector2(bw, bh))
+		draw_rect(box, Color("223349"))
+		if i == sel: draw_rect(box, Color("f39c12"), false, 4.0)
+		_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 18, opts[i], Color.WHITE if i == sel else Color(1, 1, 1, 0.6), 60)
+		if i == 1:
+			_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 55, "(bientôt)", Color(1, 1, 1, 0.4), 16)
+	_ctext(f, vp.x * 0.5, vp.y - 40, "‹ › choisir    A valider", Color(1, 1, 1, 0.6), 16)
+
+
+func _draw_list(vp: Vector2) -> void:
+	_shell_bg(vp)
+	var f := ThemeDB.fallback_font
+	_ctext(f, vp.x * 0.5, 150, "Projets — %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
+	var n := proj_list.size() + 1
+	var y0 := 200.0
+	for i in n:
+		var y := y0 + i * 44
+		var label: String = ("＋  Nouveau projet" if i == proj_list.size() else "📄  " + String(proj_list[i]["name"]))
+		var box := Rect2(Vector2(vp.x * 0.5 - 230, y - 26), Vector2(460, 36))
+		if i == sel: draw_rect(box, Color(1, 1, 1, 0.12)); draw_rect(box, Color("f39c12"), false, 2.0)
+		var col: Color = Color.WHITE if i == sel else Color(1, 1, 1, 0.65)
+		if i == proj_list.size(): col = Color("2ecc71") if i == sel else Color(0.4, 0.8, 0.5)
+		_text(f, Vector2(vp.x * 0.5 - 210, y), label, col, 18)
+	if proj_list.is_empty():
+		_ctext(f, vp.x * 0.5, y0 - 30, "Aucun projet — crée le premier", Color(1, 1, 1, 0.4), 15)
+	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A ouvrir    B retour", Color(1, 1, 1, 0.6), 16)
+
+
+func _draw_template(vp: Vector2) -> void:
+	_shell_bg(vp)
+	var f := ThemeDB.fallback_font
+	_ctext(f, vp.x * 0.5, 150, "Nouveau projet — templates %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
+	var list: Array = TEMPLATES.get(cur_dim, [])
+	if list.is_empty():
+		_ctext(f, vp.x * 0.5, vp.y * 0.5, "Aucun template %s pour l'instant (bientôt)" % cur_dim, Color(1, 1, 1, 0.5), 20)
+	else:
+		var y0 := 220.0
+		for i in list.size():
+			var y := y0 + i * 50
+			var box := Rect2(Vector2(vp.x * 0.5 - 200, y - 30), Vector2(400, 42))
+			draw_rect(box, Color("223349"))
+			if i == sel: draw_rect(box, Color("f39c12"), false, 3.0)
+			_ctext(f, vp.x * 0.5, y, String(list[i]["name"]), Color.WHITE if i == sel else Color(1, 1, 1, 0.65), 22)
+	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A créer    B retour", Color(1, 1, 1, 0.6), 16)
