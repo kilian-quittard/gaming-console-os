@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://cforgeapp0001"]
+[gd_scene load_steps=9 format=3 uid="uid://cforgeapp0001"]
 
 [ext_resource type="Script" path="res://scripts/common/forge/ForgeApp.gd" id="1_app"]
 [ext_resource type="Script" path="res://scripts/common/forge/states/ForgeRoot.gd" id="2_root"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://scripts/common/forge/states/ListState.gd" id="4_list"]
 [ext_resource type="Script" path="res://scripts/common/forge/states/TemplateState.gd" id="5_tmpl"]
 [ext_resource type="Script" path="res://scripts/common/forge/states/EditorState.gd" id="6_edit"]
+[ext_resource type="Script" path="res://scripts/common/forge/states/GameDashState.gd" id="7_dash"]
+[ext_resource type="Script" path="res://scripts/common/forge/states/ScreenEditState.gd" id="8_scredit"]
 
 [node name="Forge" type="Node2D"]
 script = ExtResource("1_app")
@@ -24,3 +26,9 @@ script = ExtResource("5_tmpl")
 
 [node name="EditorState" type="Node" parent="States"]
 script = ExtResource("6_edit")
+
+[node name="GameDashState" type="Node" parent="States"]
+script = ExtResource("7_dash")
+
+[node name="ScreenEditState" type="Node" parent="States"]
+script = ExtResource("8_scredit")

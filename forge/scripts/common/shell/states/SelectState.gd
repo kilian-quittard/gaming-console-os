@@ -1,9 +1,7 @@
 extends State
-# Écran : éditeur + test du projet ouvert
 
 
 func _on_enter(_args) -> void:
-	target.screen = "edit"
+	target.shell_screen = "select"
 	target.mode = "edit"
 	target.queue_redraw()
-	target._redraw_world()
