@@ -26,6 +26,30 @@ const PLATFORMER_PLAY := preload("res://scenes/game/PlatformerPlay.tscn")
 # état éditeur
 var grid := {}
 var level_props := {}          # propriétés du niveau (autorun, ...) lues par le template
+var cell_cfg := {}             # config par instance : Vector2i -> Dictionary (ex: plateforme mobile)
+# panneau de configuration d'objet (case sous le curseur)
+var cfg_open := false
+var cfg_cell := Vector2i.ZERO
+var cfg_idx := 0
+var cfg_fields := []           # [{key,label,options,...}] selon la tuile
+# mode "édition du fond" : vue parallax seule + placement de formes décoratives
+var show_fps := false          # overlay FPS (debug)
+var bg_edit := false
+var bg_deco := []              # formes placées : [{shape,...,factor,col}]
+var bg_shape := 0              # forme sélectionnée (index BG_SHAPES)
+var bg_depth := 1              # profondeur (index BG_DEPTHS)
+var bg_scale_i := 1            # taille (index BG_SCALES)
+var bg_tool := 0               # 0 = formes (stamps), 1 = polygone libre (dessin)
+var bg_pts := []               # points du polygone en cours [[x,y]] (coords monde)
+var bg_col := 0                # couleur sélectionnée (polygone)
+var bg_trig_l := false         # debounce gâchette L2 (reculer)
+var bg_trig_r := false         # debounce gâchette R2 (avancer)
+const BG_SHAPES := ["nuage", "montagne", "colline", "soleil", "lune", "etoile", "arbre", "sapin"]
+const BG_SHAPE_NAMES := ["Nuage", "Montagne", "Colline", "Soleil", "Lune", "Étoile", "Arbre", "Sapin"]
+const BG_DEPTHS := [0.08, 0.28, 0.55, 0.85]
+const BG_DEPTH_NAMES := ["loin", "moyen", "proche", "devant"]
+const BG_SCALES := [0.6, 1.0, 1.6, 2.4]
+const BG_COLORS := ["3a8f4f", "2e7d32", "1b5e20", "c68642", "8b4513", "7f8c8d", "5a6978", "2e1152", "e8a04b", "ecf0f1"]
 var cols := LEVEL_COLS_DEF
 var rows := 14
 var cursor := Vector2i(4, 8)
@@ -51,6 +75,7 @@ var cam_init := false
 var grabbing := false       # un bloc posé est "ramassé" et suit le pointeur
 var grab_tile := 0
 var grab_from := Vector2i.ZERO
+var grab_cfg := {}          # config de l'objet ramassé (déplacée avec lui)
 
 # undo / redo
 var undo_stack := []
@@ -321,6 +346,8 @@ func _unhandled_input(e: InputEvent) -> void:
 	if screen == "gamedash":   _gamedash_input(e); return
 	if screen == "screenedit": _screenedit_input(e); return
 	if ai_open:    _ai_panel_input(e); return
+	if cfg_open:   _config_input(e); return
+	if bg_edit:    _bgedit_input(e); return
 	if menu_open:
 		_menu_input(e); return
 	if mode == "edit":
@@ -713,18 +740,21 @@ func _begin_stroke(place: bool) -> void:
 			grabbing = true
 			grab_tile = grid[cursor]
 			grab_from = cursor
-			grid.erase(cursor)
+			grab_cfg = cell_cfg.get(cursor, {})
+			grid.erase(cursor); cell_cfg.erase(cursor)
 			place_held = false
 		else:
 			place_held = true; grid[cursor] = _active_tile()
 	else:
-		erase_held = true; grid.erase(cursor)
+		erase_held = true; grid.erase(cursor); cell_cfg.erase(cursor)
 	queue_redraw(); _redraw_world()
 
 
 func _drop_grab() -> void:
 	if not grabbing: return
 	grid[cursor] = grab_tile   # dépose à la cellule visée (écrase si occupée)
+	if not grab_cfg.is_empty(): cell_cfg[cursor] = grab_cfg
+	grab_cfg = {}
 	grabbing = false
 	queue_redraw(); _redraw_world()
 
@@ -772,15 +802,204 @@ func _redo() -> void:
 # ---------------- menu éditeur
 func _open_menu() -> void:
 	menu_open = true; menu_idx = 0
-	menu_items = ["Sauvegarder", "Copier zone", "Coller ici", "Vider niveau",
-		"Fond suivant", "Autorun: %s" % ("ON" if level_props.get("autorun", false) else "OFF"),
+	menu_items = ["Sauvegarder", "Copier zone", "Coller ici", "Configurer objet…", "Vider niveau",
+		"Customiser le fond…", "Autorun: %s" % ("ON" if level_props.get("autorun", false) else "OFF"),
 		"Physique Sonic: %s" % ("ON" if level_props.get("sonic", false) else "OFF"),
 		"Eau · Nage: %s" % ("ON" if level_props.get("water_swim", false) else "OFF"),
 		"Eau · Noyade: %s" % ("ON" if level_props.get("water_drown", false) else "OFF"),
+		"Victoire · Pièces: %s" % (str(int(level_props.get("win_coins", 0))) if int(level_props.get("win_coins", 0)) > 0 else "OFF"),
+		"Victoire · Tuer tous: %s" % ("ON" if level_props.get("win_killall", false) else "OFF"),
+		"Victoire · Temps: %s" % ((str(int(level_props.get("time_limit", 0))) + "s") if int(level_props.get("time_limit", 0)) > 0 else "OFF"),
 		"Musique: %s" % ("ON" if music_on else "OFF"),
+		"FPS (debug): %s" % ("ON" if show_fps else "OFF"),
 		"Générer avec IA...",
 		"Projets (quitter)", "Fermer"]
 	queue_redraw()
+
+
+func _cycle_preset(cur: int, presets: Array) -> int:
+	var i := presets.find(cur)
+	return int(presets[(i + 1) % presets.size()])
+
+
+# ---------------- config par instance (objet sous le curseur)
+func _cfg_fields_for(t: int) -> Array:
+	if t == tmpl.MOVPLAT:
+		return [
+			{"key": "width", "label": "Largeur", "opts": [1, 2, 3, 4, 5],           "def": 1},
+			{"key": "axis",  "label": "Axe",     "opts": ["H", "V"],                 "def": "H"},
+			{"key": "dir",   "label": "Sens",    "opts": ["+", "-"],                 "def": "+"},
+			{"key": "span",  "label": "Portée",  "opts": [1, 2, 3, 4, 5, 6],         "def": 3},
+			{"key": "speed", "label": "Vitesse", "opts": ["lent", "normal", "rapide"], "def": "normal"},
+		]
+	return []
+
+
+func _open_config() -> void:
+	var t: int = int(grid.get(cursor, -1))
+	cfg_fields = _cfg_fields_for(t)
+	if cfg_fields.is_empty():
+		_set_toast("Rien à configurer ici"); return
+	cfg_cell = cursor; cfg_idx = 0; cfg_open = true; queue_redraw()
+
+
+func _cfg_get(fld: Dictionary):
+	var d: Dictionary = cell_cfg.get(cfg_cell, {})
+	return d.get(fld["key"], fld["def"])
+
+
+func _cfg_adjust(dir: int) -> void:
+	var fld: Dictionary = cfg_fields[cfg_idx]
+	var opts: Array = fld["opts"]
+	var i := opts.find(_cfg_get(fld))
+	if i < 0: i = 0
+	var nv = opts[(i + dir + opts.size()) % opts.size()]
+	var d: Dictionary = cell_cfg.get(cfg_cell, {})
+	d[fld["key"]] = nv
+	cell_cfg[cfg_cell] = d
+	queue_redraw()
+
+
+func _config_input(e: InputEvent) -> void:
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B, JOY_BUTTON_BACK, JOY_BUTTON_A]):
+		cfg_open = false; queue_redraw(); return
+	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		cfg_idx = (cfg_idx + 1) % cfg_fields.size(); queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		cfg_idx = (cfg_idx - 1 + cfg_fields.size()) % cfg_fields.size(); queue_redraw()
+	elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]):
+		_cfg_adjust(1)
+	elif _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]):
+		_cfg_adjust(-1)
+
+
+# ---------------- édition du fond (vue parallax seule + placement de formes)
+const BG_NAMES := ["Ciel", "Espace", "Neige", "Désert"]
+
+func _open_bgedit() -> void:
+	bg_edit = true; queue_redraw(); _redraw_world()
+
+
+func _bgedit_input(e: InputEvent) -> void:
+	if e is InputEventMouseMotion:
+		aim = (e as InputEventMouseMotion).position; queue_redraw(); return
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_BACK, JOY_BUTTON_B]):
+		bg_edit = false; bg_pts.clear(); queue_redraw(); _redraw_world(); return
+	# bascule d'outil
+	if _press(e, [KEY_TAB], [JOY_BUTTON_LEFT_STICK]):
+		bg_tool = 1 - bg_tool; bg_pts.clear(); queue_redraw(); return
+	# valider le polygone en cours
+	if bg_tool == 1 and _press(e, [KEY_ENTER], [JOY_BUTTON_START]):
+		_bg_commit_poly(); return
+	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed:
+		var rects := _bg_icon_rects()
+		for i in rects.size():
+			if (rects[i] as Rect2).has_point(e.position):
+				if bg_tool == 0: bg_shape = i
+				else: bg_col = i % BG_COLORS.size()
+				queue_redraw(); return
+		_bg_place(); return
+	if _press(e, [KEY_SPACE], [JOY_BUTTON_A]):
+		_bg_place(); return
+	if _press(e, [KEY_DELETE, KEY_X], [JOY_BUTTON_X]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT and e.pressed):
+		if bg_tool == 1 and not bg_pts.is_empty(): bg_pts.pop_back(); queue_redraw()
+		else: _bg_erase()
+		return
+	if _press(e, [KEY_BRACKETLEFT, KEY_A], [JOY_BUTTON_LEFT_SHOULDER]):
+		if bg_tool == 0: bg_shape = (bg_shape - 1 + BG_SHAPES.size()) % BG_SHAPES.size()
+		else: bg_col = (bg_col - 1 + BG_COLORS.size()) % BG_COLORS.size()
+		queue_redraw()
+	elif _press(e, [KEY_BRACKETRIGHT, KEY_E], [JOY_BUTTON_RIGHT_SHOULDER]):
+		if bg_tool == 0: bg_shape = (bg_shape + 1) % BG_SHAPES.size()
+		else: bg_col = (bg_col + 1) % BG_COLORS.size()
+		queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		if bg_tool == 0: bg_scale_i = mini(bg_scale_i + 1, BG_SCALES.size() - 1)
+		else: bg_col = (bg_col + 1) % BG_COLORS.size()
+		queue_redraw()
+	elif _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		if bg_tool == 0: bg_scale_i = maxi(bg_scale_i - 1, 0)
+		else: bg_col = (bg_col - 1 + BG_COLORS.size()) % BG_COLORS.size()
+		queue_redraw()
+	elif _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]):
+		bg_depth = maxi(bg_depth - 1, 0); queue_redraw()
+	elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]):
+		bg_depth = mini(bg_depth + 1, BG_DEPTHS.size() - 1); queue_redraw()
+	elif _press(e, [KEY_PAGEUP], []):
+		_bg_reorder(1)
+	elif _press(e, [KEY_PAGEDOWN], []):
+		_bg_reorder(-1)
+	elif _press(e, [KEY_Y], [JOY_BUTTON_Y]):
+		bg_theme = (bg_theme + 1) % BG_THEMES.size(); queue_redraw(); _redraw_world()
+
+
+func _bg_place() -> void:
+	var d: float = BG_DEPTHS[bg_depth]
+	var wx: float = (aim.x - view_origin.x * d) / view_scale
+	var wy: float = (aim.y - view_origin.y * d) / view_scale
+	if bg_tool == 1:
+		bg_pts.append([wx, wy]); queue_redraw(); return
+	bg_deco.append({"shape": BG_SHAPES[bg_shape], "x": wx, "y": wy,
+		"scale": BG_SCALES[bg_scale_i], "factor": d, "col": tmpl.bg_shape_color(BG_SHAPES[bg_shape], bg_theme).to_html(false)})
+	queue_redraw(); _redraw_world()
+
+
+func _bg_commit_poly() -> void:
+	if bg_pts.size() < 3:
+		_set_toast("Polygone : place au moins 3 points"); return
+	bg_deco.append({"shape": "poly", "factor": BG_DEPTHS[bg_depth],
+		"col": BG_COLORS[bg_col], "pts": bg_pts.duplicate(true)})
+	bg_pts.clear()
+	queue_redraw(); _redraw_world()
+
+
+func _bg_pick() -> int:
+	# décor le plus proche du pointeur (ancre = position stamp ou centroïde du polygone)
+	var best := -1; var bestd := 80.0
+	for i in bg_deco.size():
+		var dd: Dictionary = bg_deco[i]
+		var f: float = float(dd["factor"])
+		var sp: Vector2
+		if str(dd.get("shape", "")) == "poly":
+			var c := Vector2.ZERO
+			var pts: Array = dd["pts"]
+			for p in pts: c += Vector2(float(p[0]), float(p[1]))
+			c /= float(max(1, pts.size()))
+			sp = Vector2(c.x * view_scale + view_origin.x * f, c.y * view_scale + view_origin.y * f)
+		else:
+			sp = Vector2(float(dd["x"]) * view_scale + view_origin.x * f, float(dd["y"]) * view_scale + view_origin.y * f)
+		var dist := sp.distance_to(aim)
+		if dist < bestd: bestd = dist; best = i
+	return best
+
+
+func _bg_reorder(dir: int) -> void:
+	# change la PROFONDEUR du décor visé (= son plan vs collines + parallax).
+	# dir > 0 : rapprocher (devant) ; dir < 0 : éloigner (derrière)
+	var i := _bg_pick()
+	if i < 0:
+		_set_toast("Vise un décor pour changer son plan"); return
+	var dd: Dictionary = bg_deco[i]
+	var cur: float = float(dd["factor"])
+	var ci := 0; var cd := 1e9
+	for j in BG_DEPTHS.size():
+		var diff: float = absf(float(BG_DEPTHS[j]) - cur)
+		if diff < cd: cd = diff; ci = j
+	ci = clampi(ci + dir, 0, BG_DEPTHS.size() - 1)
+	dd["factor"] = BG_DEPTHS[ci]
+	# garde un ordre de tableau cohérent : devant = fin, derrière = début
+	bg_deco.remove_at(i)
+	if dir > 0: bg_deco.append(dd)
+	else: bg_deco.insert(0, dd)
+	_set_toast("Plan : %s" % BG_DEPTH_NAMES[ci])
+	queue_redraw(); _redraw_world()
+
+
+func _bg_erase() -> void:
+	# gère stamps ET polygones (via _bg_pick, qui ne lit pas dd["x"] sur un poly)
+	var i := _bg_pick()
+	if i >= 0:
+		bg_deco.remove_at(i); queue_redraw(); _redraw_world()
 
 
 func _menu_input(e: InputEvent) -> void:
@@ -799,24 +1018,39 @@ func _menu_select() -> void:
 		0: _save_current()
 		1: _start_selection()
 		2: _paste_clip()
-		3: _push_undo(); grid.clear(); _set_toast("Niveau vidé")
-		4: bg_theme = (bg_theme + 1) % BG_THEMES.size(); _set_toast("Fond #%d" % (bg_theme + 1))
-		5:
+		3: menu_open = false; queue_redraw(); _open_config(); return
+		4: _push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")
+		5: menu_open = false; queue_redraw(); _open_bgedit(); return
+		6:
 			level_props["autorun"] = not level_props.get("autorun", false)
 			_set_toast("Autorun %s" % ("ON" if level_props["autorun"] else "OFF"))
-		6:
+		7:
 			level_props["sonic"] = not level_props.get("sonic", false)
 			_set_toast("Physique Sonic %s" % ("ON" if level_props["sonic"] else "OFF"))
-		7:
+		8:
 			level_props["water_swim"] = not level_props.get("water_swim", false)
 			_set_toast("Eau · Nage %s" % ("ON" if level_props["water_swim"] else "OFF"))
-		8:
+		9:
 			level_props["water_drown"] = not level_props.get("water_drown", false)
 			_set_toast("Eau · Noyade %s" % ("ON" if level_props["water_drown"] else "OFF"))
-		9: _toggle_music()
-		10: _open_ai_panel()
-		11: _save_current(); states.change_state("ListState")
-		12: pass
+		10:
+			level_props["win_coins"] = _cycle_preset(int(level_props.get("win_coins", 0)), [0, 5, 10, 20])
+			var wc: int = int(level_props["win_coins"])
+			_set_toast("Victoire · Pièces : %s" % (str(wc) if wc > 0 else "désactivé"))
+		11:
+			level_props["win_killall"] = not level_props.get("win_killall", false)
+			_set_toast("Victoire · Tuer tous %s" % ("ON" if level_props["win_killall"] else "OFF"))
+		12:
+			level_props["time_limit"] = _cycle_preset(int(level_props.get("time_limit", 0)), [0, 30, 60, 90])
+			var tl: int = int(level_props["time_limit"])
+			_set_toast("Victoire · Temps : %s" % ((str(tl) + "s") if tl > 0 else "désactivé"))
+		13: _toggle_music()
+		14:
+			show_fps = not show_fps
+			_set_toast("FPS %s" % ("ON" if show_fps else "OFF"))
+		15: _open_ai_panel()
+		16: _save_current(); states.change_state("ListState")
+		17: pass
 	menu_open = false
 	queue_redraw(); _redraw_world()   # vidage/thème/sonic peuvent changer le monde
 
@@ -989,7 +1223,7 @@ func _new_project(template_id: String) -> void:
 	bg_theme = 0
 	undo_stack.clear(); redo_stack.clear()
 	tmpl.seed_demo()
-	screens = {}; level_props = {}
+	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
 	_save_current()
 	mode = "edit"; dash_sel = 0
@@ -1038,6 +1272,11 @@ func _open_project(p: Dictionary) -> void:
 	for k in data.get("tiles", {}):
 		var parts: PackedStringArray = String(k).split(",")
 		grid[Vector2i(int(parts[0]), int(parts[1]))] = int(data["tiles"][k])
+	cell_cfg.clear()
+	for k in data.get("cfg", {}):
+		var cp: PackedStringArray = String(k).split(",")
+		cell_cfg[Vector2i(int(cp[0]), int(cp[1]))] = data["cfg"][k]
+	bg_deco = data.get("bg_deco", [])
 	undo_stack.clear(); redo_stack.clear()
 	cursor = Vector2i(4, rows - 3)
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
@@ -1052,9 +1291,11 @@ func _save_current() -> void:
 		"cols": cols, "bg": bg_theme,
 		"props": level_props,
 		"screens": screens,
-		"tiles": {}}
+		"tiles": {}, "cfg": {}, "bg_deco": bg_deco}
 	for k in grid:
 		d["tiles"]["%d,%d" % [k.x, k.y]] = grid[k]
+	for k in cell_cfg:
+		d["cfg"]["%d,%d" % [k.x, k.y]] = cell_cfg[k]
 	var f := FileAccess.open(_proj_path(cur_project), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d)); f.close()
@@ -1130,6 +1371,7 @@ func _process(delta: float) -> void:
 	if toast_t > 0.0:
 		toast_t -= delta
 		if toast_t <= 0.0: queue_redraw()
+	if show_fps: queue_redraw()   # overlay FPS : rafraîchit le chrome (monde intact)
 	if screen == "screenedit":
 		_screenedit_process(delta)
 		queue_redraw()
@@ -1154,6 +1396,23 @@ func _process(delta: float) -> void:
 	elif not l2 and radial_open:
 		radial_open = false; cat_pal[cat] = radial_pick; queue_redraw()
 	if radial_open:
+		queue_redraw()
+		return
+	# --- édition du fond : pointeur au stick uniquement (croix réservée au panneau) ---
+	if bg_edit:
+		var ab := _edit_area()
+		if aim.x < 0.0: aim = ab.position + ab.size * 0.5
+		var sb := _stick()
+		if sb != Vector2.ZERO: aim += sb * AIM_SPEED * delta
+		aim.x = clampf(aim.x, ab.position.x, ab.position.x + ab.size.x)
+		aim.y = clampf(aim.y, ab.position.y, ab.position.y + ab.size.y)
+		if _edge_pan(ab, delta, sb): _redraw_world()
+		# gâchettes : reculer (L2) / avancer (R2) le décor visé — sur front montant
+		var tr := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_RIGHT) > 0.6
+		var tl := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_LEFT) > 0.6
+		if tr and not bg_trig_r: _bg_reorder(1)
+		if tl and not bg_trig_l: _bg_reorder(-1)
+		bg_trig_r = tr; bg_trig_l = tl
 		queue_redraw()
 		return
 	# --- pointeur libre : stick (vélocité) + croix directionnelle (pas d'une cellule) ---
@@ -1190,7 +1449,7 @@ func _process(delta: float) -> void:
 	if place_held and not grabbing and grid.get(cursor) != _active_tile():
 		grid[cursor] = _active_tile(); grid_changed = true
 	elif erase_held and grid.has(cursor):
-		grid.erase(cursor); grid_changed = true
+		grid.erase(cursor); cell_cfg.erase(cursor); grid_changed = true
 	if grid_changed:
 		_redraw_world()
 	if moved or grid_changed or not particles.is_empty():
@@ -1380,17 +1639,25 @@ func _draw() -> void:
 	if screen == "gamedash":   _draw_gamedash(vp); return
 	if screen == "screenedit": _draw_screenedit(vp); return
 	# édition/jeu : le monde est rendu par le template (derrière), ici le chrome par-dessus
-	if mode == "edit" and not radial_open and get("hide_editor_chrome") != true:
+	if mode == "edit" and not radial_open and not bg_edit and get("hide_editor_chrome") != true:
 		_draw_edit_cursor()
 	_draw_topbar(vp)
 	_draw_hints(vp)
-	if mode == "edit" and not menu_open and not radial_open and aim.x >= 0.0:
+	if mode == "edit" and not menu_open and not radial_open and not bg_edit and aim.x >= 0.0:
 		_draw_reticle()
+	if bg_edit: _draw_bgedit(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
+	if cfg_open: _draw_config(vp)
 	if ai_open: _draw_ai_panel(vp)
 	if toast_t > 0.0: _draw_toast(vp)
 	if mode == "play" and tmpl.won: _draw_banner(vp)
+	if show_fps:
+		var fps := Engine.get_frames_per_second()
+		var fcol := Color("2ecc71") if fps >= 55 else (Color("f39c12") if fps >= 30 else Color("e74c3c"))
+		var txt := "%d FPS" % fps
+		draw_rect(Rect2(Vector2(vp.x - 86, TOPBAR + 6), Vector2(76, 22)), Color(0, 0, 0, 0.55))
+		_text(ThemeDB.fallback_font, Vector2(vp.x - 78, TOPBAR + 22), txt, fcol, 14)
 
 
 func _draw_edit_cursor() -> void:
@@ -1409,6 +1676,121 @@ func _draw_edit_cursor() -> void:
 	draw_rect(Rect2(cp, Vector2(CELL, CELL) * view_scale), cc, false, 3.0)
 
 
+func _draw_config(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	var pw := 360.0
+	var ph := 60.0 + cfg_fields.size() * 34.0
+	var o := Vector2(vp.x * 0.5 - pw * 0.5, vp.y * 0.5 - ph * 0.5)
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.5))
+	draw_rect(Rect2(o, Vector2(pw, ph)), Color("0d1117"))
+	draw_rect(Rect2(o, Vector2(pw, ph)), Color("f39c12"), false, 2.0)
+	_text(f, o + Vector2(16, 28), "Config : %s" % tmpl.tile_name(int(grid.get(cfg_cell, 0))), Color("f39c12"), 16)
+	for i in cfg_fields.size():
+		var fld: Dictionary = cfg_fields[i]
+		var y := o.y + 52.0 + i * 34.0
+		var sel := (i == cfg_idx)
+		if sel:
+			draw_rect(Rect2(Vector2(o.x + 6, y - 18), Vector2(pw - 12, 28)), Color(1, 1, 1, 0.08))
+		_text(f, Vector2(o.x + 18, y + 3), str(fld["label"]), Color(1, 1, 1, 0.8), 14)
+		var val := str(_cfg_get(fld))
+		var vcol := Color("f39c12") if sel else Color(1, 1, 1, 0.9)
+		_text(f, Vector2(o.x + pw - 150, y + 3), "◄ %s ►" % val, vcol, 14)
+	_text(f, o + Vector2(16, ph - 10), "◄ ► régler   ▲▼ champ   B fermer", Color(1, 1, 1, 0.4), 11)
+
+
+func _draw_bgedit(vp: Vector2) -> void:
+	# le chrome (barres) est dessiné par _draw_bg_topbar/_hints
+	if bg_tool == 0:
+		# aperçu fantôme de la forme au pointeur
+		if aim.x >= 0.0:
+			var gs: float = BG_SCALES[bg_scale_i] * view_scale
+			var gcol: Color = tmpl.bg_shape_color(BG_SHAPES[bg_shape], bg_theme); gcol.a = 0.55
+			tmpl.draw_bg_shape(self, BG_SHAPES[bg_shape], aim, gs, gcol)
+			draw_arc(aim, 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
+	else:
+		# forme fermée libre en cours : points dans l'ordre, fermeture auto (dernier→premier)
+		var d: float = BG_DEPTHS[bg_depth]
+		var col := Color(BG_COLORS[bg_col])
+		var screen_pts := PackedVector2Array()
+		for p in bg_pts:
+			screen_pts.append(Vector2(float(p[0]) * view_scale + view_origin.x * d, float(p[1]) * view_scale + view_origin.y * d))
+		var preview := PackedVector2Array(screen_pts)
+		if aim.x >= 0.0: preview.append(aim)
+		if preview.size() >= 3:
+			var fill := col; fill.a = 0.4
+			tmpl.fill_poly_closed(self, preview, fill)
+		# contour fermé (relie aussi le dernier au premier)
+		var m := preview.size()
+		for i in m:
+			draw_line(preview[i], preview[(i + 1) % m], col, 2.0)
+		for i in screen_pts.size():
+			draw_circle(screen_pts[i], 4.0, Color("f39c12"))
+		if aim.x >= 0.0:
+			draw_arc(aim, 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
+		_text(ThemeDB.fallback_font, Vector2(aim.x + 10, aim.y - 8), "%d pts — Entrée pour fermer" % screen_pts.size(), Color(1, 1, 1, 0.7), 12)
+
+
+func _sorted_by_x(pts: PackedVector2Array) -> Array:
+	var arr := []
+	for p in pts: arr.append(p)
+	arr.sort_custom(func(a, b): return a.x < b.x)
+	return arr
+
+
+func _bg_icon_rects() -> Array:
+	# rectangles cliquables (formes en mode stamp, couleurs en mode polygone)
+	var out := []
+	var n: int = BG_SHAPES.size() if bg_tool == 0 else BG_COLORS.size()
+	var x := 150.0
+	for i in n:
+		out.append(Rect2(Vector2(x, 4), Vector2(44, 44)))
+		x += 48.0
+	return out
+
+
+func _draw_bg_topbar(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, TOPBAR)), Color("11161f"))
+	_text(f, Vector2(12, 22), "FOND", Color("f39c12"), 16)
+	_text(f, Vector2(12, 42), "Formes" if bg_tool == 0 else "Polygone", Color(1, 1, 1, 0.7), 12)
+	var rects := _bg_icon_rects()
+	for i in rects.size():
+		var box: Rect2 = rects[i]
+		if bg_tool == 0:
+			var act := (i == bg_shape)
+			draw_rect(box, Color("223349") if act else Color("1a2233"))
+			tmpl.draw_bg_shape(self, BG_SHAPES[i], box.position + box.size * 0.5, 0.42, tmpl.bg_shape_color(BG_SHAPES[i], bg_theme))
+			draw_rect(box, Color("f39c12") if act else Color(1, 1, 1, 0.15), false, 3.0 if act else 1.0)
+		else:
+			var acc := (i == bg_col)
+			draw_rect(box, Color(BG_COLORS[i]))
+			draw_rect(box, Color("f39c12") if acc else Color(1, 1, 1, 0.2), false, 3.0 if acc else 1.0)
+	var rx: float = rects[rects.size() - 1].end.x + 14.0
+	_text(f, Vector2(rx, 20), "Prof: %s   Taille: %.1f" % [BG_DEPTH_NAMES[bg_depth], BG_SCALES[bg_scale_i]], Color(1, 1, 1, 0.85), 12)
+	_text(f, Vector2(rx, 40), "Thème: %s   (TAB outil)" % [BG_NAMES[bg_theme] if bg_theme < BG_NAMES.size() else str(bg_theme)], Color(1, 1, 1, 0.6), 12)
+
+
+func _draw_bg_hints(vp: Vector2) -> void:
+	draw_rect(Rect2(Vector2(0, vp.y - BOTTOM), Vector2(vp.x, BOTTOM)), Color("131a14"))
+	var x := 12.0
+	var y := vp.y - BOTTOM + 6.0
+	x = _badge(x, y, "TAB", "Outil")
+	if bg_tool == 0:
+		x = _badge(x, y, "A", "Poser")
+		x = _badge(x, y, "X", "Effacer")
+		x = _badge(x, y, "A/E", "Forme")
+		x = _badge(x, y, "↑↓", "Taille")
+	else:
+		x = _badge(x, y, "A", "Point")
+		x = _badge(x, y, "Enter", "Valider")
+		x = _badge(x, y, "X", "Retirer pt")
+		x = _badge(x, y, "A/E", "Couleur")
+	x = _badge(x, y, "←→", "Profondeur")
+	x = _badge(x, y, "L2/R2", "Arr./Av. plan")
+	x = _badge(x, y, "Y", "Thème")
+	x = _badge(x, y, "B", "Sortir")
+
+
 func _draw_reticle() -> void:
 	var c := Color("f39c12") if grabbing else Color.WHITE
 	draw_arc(aim, 9.0, 0.0, TAU, 18, Color(c.r, c.g, c.b, 0.85), 1.8)
@@ -1420,6 +1802,8 @@ func _draw_reticle() -> void:
 
 
 func _draw_topbar(vp: Vector2) -> void:
+	if bg_edit:
+		_draw_bg_topbar(vp); return
 	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, TOPBAR)), Color("11161f"))
 	var f := ThemeDB.fallback_font
 	if mode == "edit":
@@ -1442,8 +1826,23 @@ func _draw_topbar(vp: Vector2) -> void:
 		_text(f, Vector2(x + 8, 42), "Curseur: %s" % cursor_mode, Color(1, 1, 1, 0.6), 12)
 	else:
 		_text(f, Vector2(16, 34), "FORGE — TEST", Color("2ecc71"), 22)
-		_text(f, Vector2(240, 34), "Pièces: %d/%d" % [tmpl.coins_got, tmpl.coins_total], Color("f1c40f"), 20)
-		if tmpl.has_key: _text(f, Vector2(430, 34), "🔑", Color("f1c40f"), 20)
+		var need_coins: int = int(level_props.get("win_coins", 0))
+		var coin_str := "Pièces: %d/%d" % [tmpl.coins_got, tmpl.coins_total]
+		if need_coins > 0:
+			coin_str = "Pièces: %d/%d (req. %d)" % [tmpl.coins_got, tmpl.coins_total, need_coins]
+		var coin_col := Color("f1c40f")
+		if need_coins > 0 and tmpl.coins_got < need_coins: coin_col = Color("e67e22")
+		_text(f, Vector2(240, 34), coin_str, coin_col, 18)
+		if tmpl.has_key: _text(f, Vector2(560, 34), "🔑", Color("f1c40f"), 20)
+		# objectif "tuer tous" : compteur d'ennemis restants
+		if level_props.get("win_killall", false):
+			var left: int = tmpl._enemies_left()
+			_text(f, Vector2(600, 34), "Ennemis: %d" % left, Color("2ecc71") if left == 0 else Color("e74c3c"), 18)
+		# chrono
+		if level_props.get("time_limit", 0) > 0 and mode == "play":
+			var tl: float = tmpl.time_left
+			var tcol := Color("ffffff") if tl > 10.0 else Color("e74c3c")
+			_text(f, Vector2(790, 34), "⏱ %d" % ceili(tl), tcol, 20)
 		# jauge d'air (noyade) : bulles qui se vident sous l'eau
 		if level_props.get("water_drown", false):
 			var frac: float = clampf(tmpl.air_t / tmpl.AIR_MAX, 0.0, 1.0)
@@ -1464,6 +1863,8 @@ func _draw_topbar(vp: Vector2) -> void:
 
 
 func _draw_hints(vp: Vector2) -> void:
+	if bg_edit:
+		_draw_bg_hints(vp); return
 	draw_rect(Rect2(Vector2(0, vp.y - BOTTOM), Vector2(vp.x, BOTTOM)), Color("11161f"))
 	var x := 12.0
 	var y := vp.y - BOTTOM + 6.0

@@ -153,6 +153,7 @@ var climbing := false
 var on_ice := false
 var was_in_water := false
 var air_t := 8.0          # réserve d'air courante (noyade)
+var time_left := 0.0      # chrono restant (0 = pas de limite)
 var prev_vx := 0.0
 var gates_open := false
 var switch_cd := 0.0
@@ -234,6 +235,7 @@ func start_play(from_cursor: bool) -> void:
 	pvel = Vector2.ZERO; input_x = 0
 	on_ladder = false; climbing = false; on_ice = false; prev_vx = 0.0
 	was_in_water = false; air_t = AIR_MAX
+	time_left = _time_limit()
 	gates_open = false; switch_cd = 0.0; autorun_dir = 1
 	gsp = 0.0; gangle = 0.0; sonic_grounded = false
 	_build_entities()
@@ -276,7 +278,19 @@ func _build_entities() -> void:
 		elif app.grid[k] == FIREBAR:
 			hazards.append({"type": "firebar", "center": Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL), "ang": 0.0})
 		elif app.grid[k] == MOVPLAT:
-			plats.append({"pos": Vector2(k.x * CELL, k.y * CELL), "dir": 1, "min": float((k.x - 3) * CELL), "max": float((k.x + 3) * CELL)})
+			var cfg: Dictionary = app.cell_cfg.get(k, {})
+			var axis: String = str(cfg.get("axis", "H"))
+			var span: int = int(cfg.get("span", 3))
+			var spd: float = {"lent": 50.0, "normal": 90.0, "rapide": 150.0}.get(cfg.get("speed", "normal"), 90.0)
+			var sdir: int = -1 if str(cfg.get("dir", "+")) == "-" else 1
+			var w: int = int(cfg.get("width", 1))
+			var pos := Vector2(k.x * CELL, k.y * CELL)
+			if axis == "V":
+				plats.append({"pos": pos, "dir": sdir, "axis": "V", "spd": spd, "w": w,
+					"min": float((k.y - span) * CELL), "max": float((k.y + span) * CELL)})
+			else:
+				plats.append({"pos": pos, "dir": sdir, "axis": "H", "spd": spd, "w": w,
+					"min": float((k.x - span) * CELL), "max": float((k.x + span) * CELL)})
 		elif app.grid[k] == LOOP_CENTER:
 			active_loops.append({"center": Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL), "radius": LOOP_R})
 
@@ -331,13 +345,16 @@ func _physics_process(delta: float) -> void:
 			pvel = Vector2.ZERO
 			gsp = 0.0; sonic_grounded = false; on_floor = false
 			was_in_water = false; air_t = AIR_MAX
+			time_left = _time_limit()
 		return
 
 	if _sonic():
+		_move_plats(delta)
 		_sonic_physics(delta)
+		_carry_on_plat(delta)
 		_update_enemies(delta)
 		if ppos.y > app.rows * CELL + 200: _die()
-		_interactions()
+		_interactions(delta)
 		queue_redraw(); app.queue_redraw()
 		return
 
@@ -443,7 +460,7 @@ func _physics_process(delta: float) -> void:
 	_conveyor_push(delta)
 	_update_enemies(delta)
 	if ppos.y > app.rows * CELL + 200: _die()
-	_interactions()
+	_interactions(delta)
 	queue_redraw()
 	app.queue_redraw()
 
@@ -498,16 +515,26 @@ func _conveyor_push(delta: float) -> void:
 
 func _move_plats(delta: float) -> void:
 	for p in plats:
-		p.pos.x += p.dir * 90.0 * delta
-		if p.pos.x <= p.min: p.pos.x = p.min; p.dir = 1
-		elif p.pos.x >= p.max: p.pos.x = p.max; p.dir = -1
+		var spd: float = p.get("spd", 90.0)
+		if p.get("axis", "H") == "V":
+			p.pos.y += p.dir * spd * delta
+			if p.pos.y <= p.min: p.pos.y = p.min; p.dir = 1
+			elif p.pos.y >= p.max: p.pos.y = p.max; p.dir = -1
+		else:
+			p.pos.x += p.dir * spd * delta
+			if p.pos.x <= p.min: p.pos.x = p.min; p.dir = 1
+			elif p.pos.x >= p.max: p.pos.x = p.max; p.dir = -1
 
 
 func _carry_on_plat(delta: float) -> void:
 	var feet := Rect2(ppos + Vector2(2, PSIZE.y - 2), Vector2(PSIZE.x - 4, 6))
 	for p in plats:
-		if feet.intersects(Rect2(p.pos, Vector2(CELL, 14))):
-			ppos.x += p.dir * 90.0 * delta
+		if feet.intersects(Rect2(p.pos, Vector2(int(p.get("w", 1)) * CELL, 14))):
+			var spd: float = p.get("spd", 90.0)
+			if p.get("axis", "H") == "V":
+				ppos.y += p.dir * spd * delta   # porté verticalement
+			else:
+				ppos.x += p.dir * spd * delta
 
 
 func _solid_rects() -> Array:
@@ -520,7 +547,7 @@ func _solid_rects() -> Array:
 		if _is_full_solid(t) and not _under_slope(c):
 			out.append(_cell_rect(c))
 	for p in plats:
-		out.append(Rect2(p.pos, Vector2(CELL, 14)))
+		out.append(Rect2(p.pos, Vector2(int(p.get("w", 1)) * CELL, 14)))
 	return out
 
 
@@ -893,6 +920,9 @@ func _solid_at(p: Vector2, check_loops: bool = true) -> bool:
 		if _is_slope(t):
 			var lx: float = clampf(p.x - c.x * CELL, 0.0, CELL)
 			if p.y >= _slope_surface(t, c, lx): return true
+	for pl in plats:   # plateformes mobiles : solides aussi en mode Sonic
+		if Rect2(pl.pos, Vector2(int(pl.get("w", 1)) * CELL, 14)).has_point(p):
+			return true
 	if check_loops and loop_exit_cd <= 0.0 and not active_loops.is_empty():
 		for lp in active_loops:
 			var lc: Vector2 = lp.center
@@ -1220,7 +1250,14 @@ func _die() -> void:
 	player_died.emit()
 
 
-func _interactions() -> void:
+func _interactions(delta: float) -> void:
+	# chrono : si une limite est posée, décompte et mort si épuisé
+	if time_left > 0.0:
+		time_left -= delta
+		if time_left <= 0.0:
+			time_left = 0.0
+			app._shake(6.0, 0.2); _die()
+			return
 	for c in _cells(Rect2(ppos, PSIZE)):
 		match app.grid.get(c, EMPTY):
 			COIN:
@@ -1261,10 +1298,13 @@ func _interactions() -> void:
 					app._play("coin")
 			GOAL:
 				if not won:
-					won = true
-					app._emit(_cell_center(c), 24, COLORS[GOAL], 240.0, 0.7, false, 4.0)
-					app._play("win")
-					level_won.emit()
+					if _goal_unlocked():
+						won = true
+						app._emit(_cell_center(c), 24, COLORS[GOAL], 240.0, 0.7, false, 4.0)
+						app._play("win")
+						level_won.emit()
+					else:
+						app._set_toast(_goal_reason())
 	if has_key:
 		for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
 			if app.grid.get(c, EMPTY) == DOOR:
@@ -1277,6 +1317,40 @@ func _interactions() -> void:
 func _in_water() -> bool:
 	var c := Vector2i(int((ppos.x + PSIZE.x * 0.5) / CELL), int((ppos.y + PSIZE.y * 0.5) / CELL))
 	return app.grid.get(c, EMPTY) == WATER
+
+
+func _time_limit() -> float:
+	var ap = app.get("level_props")
+	return float(ap.get("time_limit", 0)) if ap != null else 0.0
+
+
+# nombre d'ennemis tuables encore vivants (exclut piquant/poisson/rebond non-tuables)
+func _enemies_left() -> int:
+	var n := 0
+	for en in enemies:
+		if en.alive and en.type != "spiker" and en.type != "fish" and en.type != "bouncer":
+			n += 1
+	return n
+
+
+# l'Arrivée est-elle déverrouillée ? (pièces requises + tuer tous)
+func _goal_unlocked() -> bool:
+	var ap = app.get("level_props")
+	if ap == null: return true
+	if coins_got < int(ap.get("win_coins", 0)): return false
+	if ap.get("win_killall", false) and _enemies_left() > 0: return false
+	return true
+
+
+func _goal_reason() -> String:
+	var ap = app.get("level_props")
+	if ap == null: return ""
+	var need: int = int(ap.get("win_coins", 0))
+	if coins_got < need:
+		return "Pièces : %d / %d" % [coins_got, need]
+	if ap.get("win_killall", false) and _enemies_left() > 0:
+		return "Ennemis restants : %d" % _enemies_left()
+	return ""
 
 
 func _water_swim() -> bool:
@@ -1343,6 +1417,10 @@ func _draw() -> void:
 	var lvl_r := Rect2(app._w2s(Vector2.ZERO), lvl * app.view_scale)
 	_draw_parallax(vp, lvl_r)
 
+	# mode "édition du fond" : on n'affiche QUE le parallax (objets/tuiles cachés)
+	if app.get("bg_edit") == true:
+		return
+
 	# culling : bornes de cases visibles à l'écran (gros niveaux = 140+ cols)
 	var w_tl: Vector2 = app._s2w(Vector2.ZERO)
 	var w_br: Vector2 = app._s2w(vp)
@@ -1394,7 +1472,8 @@ func _draw() -> void:
 
 	if app.mode == "play":
 		for p in plats:
-			draw_tile(self, app._w2s(p.pos), MOVPLAT, app.view_scale)
+			for wi in int(p.get("w", 1)):
+				draw_tile(self, app._w2s(p.pos + Vector2(wi * CELL, 0)), MOVPLAT, app.view_scale)
 		for en in enemies:
 			if en.alive:
 				var et := ENEMY
@@ -1477,36 +1556,217 @@ func _draw_parallax(_vp: Vector2, lvl_r: Rect2) -> void:
 	var vx0: float = maxf(lvl_r.position.x, 0.0)
 	var vx1: float = minf(lvl_r.position.x + lvl_r.size.x, _vp.x)
 	var clip_r := Rect2(Vector2(vx0, lvl_r.position.y), Vector2(maxf(vx1 - vx0, 0.0), lvl_r.size.y))
+	# couches du thème (couleur de fond + descripteurs de couches, triés par profondeur)
+	var layers := []
 	match app.bg_theme:
 		0:
 			draw_rect(lvl_r, Color("5dade2"))
-			_px_clouds(Color(1.0, 1.0, 1.0, 0.82), 0.06, clip_r, vo, vs)
-			_px_hills(Color("a9dfb5"), 0.14, 0.54, 0.0040, 0.0,  clip_r, vo, vs, bt)
-			_px_hills(Color("27ae60"), 0.34, 0.38, 0.0065, 2.1,  clip_r, vo, vs, bt)
-			_px_hills(Color("1a7a3c"), 0.60, 0.24, 0.0095, 4.7,  clip_r, vo, vs, bt)
+			layers.append({"f": 0.06, "k": "clouds", "c": Color(1, 1, 1, 0.82)})
+			layers.append({"f": 0.14, "k": "hill", "c": Color("a9dfb5"), "h": 0.54, "fr": 0.0040, "ph": 0.0})
+			layers.append({"f": 0.34, "k": "hill", "c": Color("27ae60"), "h": 0.38, "fr": 0.0065, "ph": 2.1})
+			layers.append({"f": 0.60, "k": "hill", "c": Color("1a7a3c"), "h": 0.24, "fr": 0.0095, "ph": 4.7})
 		1:
 			draw_rect(lvl_r, Color("0f0225"))
-			_px_stars(clip_r, vo, vs)
-			_px_hills(Color("2e1152"), 0.14, 0.58, 0.0032, 1.0,  clip_r, vo, vs, bt)
-			_px_hills(Color("1a0a35"), 0.34, 0.42, 0.0058, 3.2,  clip_r, vo, vs, bt)
-			_px_hills(Color("0d0018"), 0.60, 0.28, 0.0085, 5.5,  clip_r, vo, vs, bt)
+			layers.append({"f": 0.04, "k": "stars"})
+			layers.append({"f": 0.14, "k": "hill", "c": Color("2e1152"), "h": 0.58, "fr": 0.0032, "ph": 1.0})
+			layers.append({"f": 0.34, "k": "hill", "c": Color("1a0a35"), "h": 0.42, "fr": 0.0058, "ph": 3.2})
+			layers.append({"f": 0.60, "k": "hill", "c": Color("0d0018"), "h": 0.28, "fr": 0.0085, "ph": 5.5})
 		2:
 			draw_rect(lvl_r, Color("cce8f4"))
-			_px_clouds(Color(1.0, 1.0, 1.0, 0.72), 0.06, clip_r, vo, vs)
-			_px_hills(Color("81c784"), 0.14, 0.52, 0.0038, 0.5,  clip_r, vo, vs, bt)
-			_px_hills(Color("388e3c"), 0.34, 0.38, 0.0062, 2.8,  clip_r, vo, vs, bt)
-			_px_hills(Color("1b5e20"), 0.60, 0.26, 0.0088, 5.1,  clip_r, vo, vs, bt)
+			layers.append({"f": 0.06, "k": "clouds", "c": Color(1, 1, 1, 0.72)})
+			layers.append({"f": 0.14, "k": "hill", "c": Color("81c784"), "h": 0.52, "fr": 0.0038, "ph": 0.5})
+			layers.append({"f": 0.34, "k": "hill", "c": Color("388e3c"), "h": 0.38, "fr": 0.0062, "ph": 2.8})
+			layers.append({"f": 0.60, "k": "hill", "c": Color("1b5e20"), "h": 0.26, "fr": 0.0088, "ph": 5.1})
 		3:
 			draw_rect(lvl_r, Color("f5b349"))
-			_px_hills(Color("f0d080"), 0.14, 0.40, 0.0030, 0.8,  clip_r, vo, vs, bt)
-			_px_hills(Color("c68642"), 0.34, 0.30, 0.0050, 2.5,  clip_r, vo, vs, bt)
-			_px_hills(Color("8b4513"), 0.60, 0.20, 0.0078, 4.2,  clip_r, vo, vs, bt)
+			layers.append({"f": 0.14, "k": "hill", "c": Color("f0d080"), "h": 0.40, "fr": 0.0030, "ph": 0.8})
+			layers.append({"f": 0.34, "k": "hill", "c": Color("c68642"), "h": 0.30, "fr": 0.0050, "ph": 2.5})
+			layers.append({"f": 0.60, "k": "hill", "c": Color("8b4513"), "h": 0.20, "fr": 0.0078, "ph": 4.2})
 		_:
 			draw_rect(lvl_r, Color("223349"))
+	# décors du créateur ajoutés comme couches (selon leur profondeur)
+	for dd in app.bg_deco:
+		layers.append({"f": float(dd["factor"]), "k": "deco", "d": dd})
+	# index d'insertion pour un tri stable (à profondeur égale : ordre conservé)
+	for i in layers.size(): layers[i]["i"] = i
+	layers.sort_custom(func(a, b): return a["i"] < b["i"] if a["f"] == b["f"] else a["f"] < b["f"])
+	# far (factor petit) dessiné en premier = derrière
+	for L in layers:
+		match L["k"]:
+			"clouds": _px_clouds(L["c"], L["f"], clip_r, vo, vs)
+			"stars":  _px_stars(clip_r, vo, vs)
+			"hill":   _px_hills(L["c"], L["f"], L["h"], L["fr"], L["ph"], clip_r, vo, vs, bt)
+			"deco":   _draw_one_deco(L["d"], vo, vs)
+
+
+func _draw_one_deco(dd: Dictionary, vo: Vector2, vs: float) -> void:
+	var fac: float = float(dd["factor"])
+	if str(dd["shape"]) == "poly":
+		var outline := PackedVector2Array()
+		for p in dd["pts"]:
+			outline.append(Vector2(float(p[0]) * vs + vo.x * fac, float(p[1]) * vs + vo.y * fac))
+		fill_poly_closed(self, outline, Color(str(dd["col"])))
+	else:
+		var sp := Vector2(float(dd["x"]) * vs + vo.x * fac, float(dd["y"]) * vs + vo.y * fac)
+		draw_bg_shape(self, str(dd["shape"]), sp, float(dd["scale"]) * vs, Color(str(dd["col"])))
+
+
+# lisse une boucle FERMÉE (Catmull-Rom) → contour arrondi
+func smooth_closed(pts: PackedVector2Array) -> PackedVector2Array:
+	var n := pts.size()
+	if n < 3: return pts
+	var out := PackedVector2Array()
+	var steps := 6
+	for i in n:
+		var p0 := pts[(i - 1 + n) % n]
+		var p1 := pts[i]
+		var p2 := pts[(i + 1) % n]
+		var p3 := pts[(i + 2) % n]
+		for s in steps:
+			var t := float(s) / float(steps)
+			var t2 := t * t
+			var t3 := t2 * t
+			out.append(0.5 * (
+				(2.0 * p1) + (-p0 + p2) * t +
+				(2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+				(-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3))
+	return out
+
+
+# remplit un polygone FERMÉ libre. Triangulation via Geometry2D (renvoie vide si
+# auto-sécant → on ne dessine rien, AUCUNE erreur). Rendu en triangles (draw_primitive).
+func fill_poly_closed(ci: CanvasItem, pts: PackedVector2Array, col: Color) -> void:
+	if pts.size() < 3: return
+	var loop := smooth_closed(pts)
+	var idx := Geometry2D.triangulate_polygon(loop)
+	if idx.is_empty():
+		loop = pts
+		idx = Geometry2D.triangulate_polygon(loop)
+		if idx.is_empty(): return
+	var cols := PackedColorArray([col, col, col])
+	var no_uv := PackedVector2Array()
+	var i := 0
+	while i < idx.size():
+		ci.draw_primitive(PackedVector2Array([loop[idx[i]], loop[idx[i + 1]], loop[idx[i + 2]]]), cols, no_uv)
+		i += 3
+
+
+# lisse une courbe ouverte (Catmull-Rom) à travers des points triés
+func smooth_open(pts: Array) -> PackedVector2Array:
+	var n := pts.size()
+	if n < 3:
+		return PackedVector2Array(pts)
+	var out := PackedVector2Array()
+	var steps := 8
+	for i in range(n - 1):
+		var p0: Vector2 = pts[maxi(i - 1, 0)]
+		var p1: Vector2 = pts[i]
+		var p2: Vector2 = pts[i + 1]
+		var p3: Vector2 = pts[mini(i + 2, n - 1)]
+		for s in steps:
+			var t := float(s) / float(steps)
+			var t2 := t * t
+			var t3 := t2 * t
+			out.append(0.5 * (
+				(2.0 * p1) +
+				(-p0 + p2) * t +
+				(2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+				(-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3))
+	out.append(pts[n - 1])
+	return out
+
+
+# silhouette de colline : contour (haut) trié par x, lissé, rempli jusqu'au sol.
+# Rempli par LIGNES VERTICALES (jamais de triangulation → aucune erreur possible,
+# quelle que soit la forme du contour).
+func fill_silhouette(ci: CanvasItem, outline: PackedVector2Array, baseline_y: float, col: Color) -> void:
+	var arr := []
+	for p in outline: arr.append(p)
+	if arr.size() < 2: return
+	arr.sort_custom(func(a, b): return a.x < b.x)
+	var sm := smooth_open(arr)
+	# nettoie : x strictement croissants (le lissage peut revenir en arrière)
+	var top := PackedVector2Array()
+	for p in sm:
+		if top.is_empty() or p.x > top[top.size() - 1].x + 0.5:
+			top.append(p)
+	if top.size() < 2: return
+	var step := 2.0
+	for i in range(top.size() - 1):
+		var a: Vector2 = top[i]
+		var b: Vector2 = top[i + 1]
+		var span: float = b.x - a.x
+		if span <= 0.0: continue
+		var x := a.x
+		while x <= b.x:
+			var t: float = (x - a.x) / span
+			var ty: float = lerpf(a.y, b.y, t)
+			ci.draw_line(Vector2(x, ty), Vector2(x, baseline_y), col, step + 0.6)
+			x += step
+
+
+# couleur par défaut d'une forme de fond (teintée un peu par le thème)
+func bg_shape_color(shape: String, theme: int) -> Color:
+	match shape:
+		"nuage":    return Color("ecf0f1") if theme != 1 else Color("bfc7d5")
+		"montagne": return Color("7f8c8d") if theme != 3 else Color("9c6b3f")
+		"colline":  return Color("3a8f4f") if theme != 1 else Color("2e1152")
+		"soleil":   return Color("ffd35b")
+		"lune":     return Color("eef2f7")
+		"etoile":   return Color("fff7cc")
+		"arbre":    return Color("2e7d32")
+		"sapin":    return Color("1f6b3a")
+	return Color("ffffff")
+
+
+# dessine une forme de fond centrée en c, taille unité s (≈ multiplicateur), couleur col
+func draw_bg_shape(ci: CanvasItem, shape: String, c: Vector2, s: float, col: Color) -> void:
+	var u := s * 44.0
+	match shape:
+		"nuage":
+			ci.draw_circle(c, u * 0.55, col)
+			ci.draw_circle(c + Vector2(u * 0.6, u * 0.12), u * 0.42, col)
+			ci.draw_circle(c - Vector2(u * 0.6, -u * 0.14), u * 0.40, col)
+			ci.draw_circle(c + Vector2(u * 0.18, -u * 0.22), u * 0.40, col)
+		"montagne":
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-u, u * 0.8), c + Vector2(0, -u), c + Vector2(u, u * 0.8)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([
+				c + Vector2(-u * 0.26, -u * 0.32), c + Vector2(0, -u), c + Vector2(u * 0.26, -u * 0.32)]), Color(1, 1, 1, col.a * 0.9))
+		"colline":
+			var pts := PackedVector2Array()
+			for i in 13:
+				var a := PI * float(i) / 12.0
+				pts.append(c + Vector2(-cos(a) * u * 1.3, -sin(a) * u * 0.7 + u * 0.5))
+			ci.draw_colored_polygon(pts, col)
+		"soleil":
+			for i in 12:
+				var a := TAU * float(i) / 12.0
+				ci.draw_line(c + Vector2(cos(a), sin(a)) * u * 0.7, c + Vector2(cos(a), sin(a)) * u * 1.1, col, maxf(1.5, u * 0.06))
+			ci.draw_circle(c, u * 0.62, col)
+		"lune":
+			ci.draw_circle(c, u * 0.6, col)
+			ci.draw_circle(c + Vector2(u * 0.22, -u * 0.12), u * 0.12, Color(col.r * 0.85, col.g * 0.85, col.b * 0.85, col.a))
+			ci.draw_circle(c + Vector2(-u * 0.18, u * 0.2), u * 0.09, Color(col.r * 0.85, col.g * 0.85, col.b * 0.85, col.a))
+		"etoile":
+			ci.draw_line(c - Vector2(u * 0.5, 0), c + Vector2(u * 0.5, 0), col, maxf(1.5, u * 0.08))
+			ci.draw_line(c - Vector2(0, u * 0.5), c + Vector2(0, u * 0.5), col, maxf(1.5, u * 0.08))
+			ci.draw_circle(c, u * 0.16, col)
+		"arbre":
+			ci.draw_rect(Rect2(c + Vector2(-u * 0.1, 0), Vector2(u * 0.2, u * 0.7)), Color("5d4037", col.a))
+			ci.draw_circle(c + Vector2(0, -u * 0.2), u * 0.5, col)
+		"sapin":
+			ci.draw_rect(Rect2(c + Vector2(-u * 0.08, u * 0.5), Vector2(u * 0.16, u * 0.4)), Color("5d4037", col.a))
+			for i in 3:
+				var yy := -u * 0.6 + i * u * 0.45
+				var w := u * (0.5 + i * 0.28)
+				ci.draw_colored_polygon(PackedVector2Array([
+					c + Vector2(-w, yy + u * 0.5), c + Vector2(0, yy - u * 0.25), c + Vector2(w, yy + u * 0.5)]), col)
 
 
 func _px_hills(color: Color, factor: float, h_ratio: float, freq: float, phase: float,
 			   lvl_r: Rect2, vo: Vector2, vs: float, bt: float) -> void:
+	if not app.level_props.get("bg_hills", true): return
 	var hill_h := lvl_r.size.y * h_ratio
 	var x0 := lvl_r.position.x
 	var x1 := lvl_r.position.x + lvl_r.size.x
@@ -1525,6 +1785,7 @@ func _px_hills(color: Color, factor: float, h_ratio: float, freq: float, phase: 
 
 
 func _px_clouds(color: Color, factor: float, lvl_r: Rect2, vo: Vector2, vs: float) -> void:
+	if not app.level_props.get("bg_sky", true): return
 	var TILE_W := 1400.0
 	var defs: Array = [
 		[0.08, 0.10, 1.1], [0.27, 0.06, 0.75], [0.49, 0.13, 1.3],
@@ -1549,6 +1810,7 @@ func _px_clouds(color: Color, factor: float, lvl_r: Rect2, vo: Vector2, vs: floa
 
 
 func _px_stars(lvl_r: Rect2, vo: Vector2, vs: float) -> void:
+	if not app.level_props.get("bg_sky", true): return
 	var GS := 88.0; var factor := 0.04
 	var px := vo.x * factor
 	var sky_h := lvl_r.size.y * 0.60
