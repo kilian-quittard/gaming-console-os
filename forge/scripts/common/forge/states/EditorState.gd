@@ -6,3 +6,4 @@ func _on_enter(_args) -> void:
 	target.screen = "edit"
 	target.mode = "edit"
 	target.queue_redraw()
+	target._redraw_world()

@@ -16,6 +16,7 @@ const DEADZONE := 0.35
 var screen := "edit"           # toujours "edit" (templates lisent cette valeur)
 var mode := "edit"             # "play" = physique active / "edit" = pause
 var grid := {}
+var level_props := {}           # propriétés de niveau (autorun, ...) lues par le template
 var cols := 40
 var rows := 14
 var cursor := Vector2i.ZERO
@@ -36,6 +37,7 @@ var hide_editor_chrome := true  # empêche le template de dessiner le chrome éd
 # --- config projet ---
 var project_title := "MON JEU"
 var project_levels: Array = []  # [{name, cols, bg, tiles: {"x,y": int}}]
+var project_screens := {}        # données déco/tampons/textes/style par écran
 enum SelectMode { LINEAR, LIST, FREE }
 var select_mode_type: int = SelectMode.LINEAR
 
@@ -76,6 +78,7 @@ func setup(config: Dictionary) -> void:
 	select_mode_type = config.get("select_mode", SelectMode.LINEAR)
 	progress = config.get("progress", {})
 	bg_theme = config.get("bg_theme", 0)
+	project_screens = config.get("screens", {})
 
 
 # =================================================== demo standalone
@@ -213,6 +216,8 @@ func _load_level_data(idx: int) -> void:
 	var lvl: Dictionary = project_levels[idx]
 	cols = int(lvl.get("cols", 40))
 	bg_theme = int(lvl.get("bg", 0)) % BG_THEMES.size()
+	var pr = lvl.get("props", {})
+	level_props = pr if typeof(pr) == TYPE_DICTIONARY else {}
 	grid.clear()
 	for k in lvl.get("tiles", {}):
 		var parts: PackedStringArray = String(k).split(",")
@@ -415,13 +420,13 @@ func _ct(cx: float, y: float, s: String, col: Color, size: int) -> void:
 
 
 func _draw_title(vp: Vector2) -> void:
-	draw_rect(Rect2(Vector2.ZERO, vp), C_BG)
-	_ct(vp.x * 0.5, 90, "SPARK", C_TITLE, 26)
-	_ct(vp.x * 0.5, 200, project_title, C_WHITE, 62)
-	var n := project_levels.size()
-	_ct(vp.x * 0.5, 270, "%d niveau%s" % [n, "x" if n > 1 else ""], C_GRAY, 18)
-	if fmod(anim_t, 1.0) < 0.65:
-		_ct(vp.x * 0.5, 370, "Appuyer sur  A", C_WHITE, 28)
+	var data: Dictionary = project_screens.get("title", ScreenArt.empty_screen())
+	var ah := String(data.get("accent", "3498db"))
+	var accent := Color(ah) if ah.length() == 6 else Color("3498db")
+	var bi := int(data.get("bg", 0)) % BG_THEMES.size()
+	var ctx := {"accent": accent, "bg": BG_THEMES[bi][0], "title_text": project_title,
+		"subtitle": String(data.get("subtitle", "")), "anim_t": anim_t}
+	ScreenArt.draw_title(self, Rect2(Vector2.ZERO, vp), data, ctx)
 	_ct(vp.x * 0.5, vp.y - 40, "B → Quitter", C_GRAY, 16)
 
 
