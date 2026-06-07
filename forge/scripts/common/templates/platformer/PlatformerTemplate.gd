@@ -182,6 +182,7 @@ var pinv := 0.0           # invulnérabilité joueur (i-frames, ex: dash)
 var dash_cd := 0.0
 var dashing := 0.0        # temps restant du dash en cours
 var dash_dir := Vector2.RIGHT
+var pos_hist := []        # historique de position (ghosting GBA)
 var prev_vx := 0.0
 var gates_open := false
 var plate_open := false    # (visuel) au moins une dalle enfoncée
@@ -198,6 +199,7 @@ var sonic_grounded := false
 var land_debug := ""
 var active_loops: Array = []
 var loop_exit_cd := 0.0   # cooldown post-loop : empêche la re-entrée immédiate
+var last_loop = null      # loop qu'on vient de quitter (le cooldown ne bloque QUE celui-ci)
 var _on_loop := false     # joueur était sur le mur du loop au frame précédent
 const SONIC_ACC := 1500.0
 const SONIC_DEC := 4200.0      # freinage (sens opposé)
@@ -282,7 +284,7 @@ func start_play(from_cursor: bool) -> void:
 	on_ladder = false; climbing = false; on_ice = false; prev_vx = 0.0
 	was_in_water = false; air_t = AIR_MAX
 	time_left = _time_limit()
-	pinv = 0.0; dashing = 0.0; dash_cd = 0.0
+	pinv = 0.0; dashing = 0.0; dash_cd = 0.0; pos_hist = []
 	max_hearts = int(app.level_props.get("player_hp", default_hp()))
 	hearts = max_hearts
 	plate_cells = []
@@ -302,6 +304,7 @@ func start_play(from_cursor: bool) -> void:
 func _build_entities() -> void:
 	enemies.clear(); plats.clear(); active_loops.clear(); projectiles.clear()
 	hazards.clear(); crumbled.clear(); crumble_t.clear(); fb_trig.clear(); fb_t.clear()
+	last_loop = null; loop_exit_cd = 0.0; _on_loop = false
 	gates_open = false
 	for k in app.grid:
 		if app.grid[k] == ENEMY:
@@ -405,6 +408,16 @@ func _process(_delta: float) -> void:
 	# En édition : le monde est statique ; ForgeApp déclenche tmpl.queue_redraw()
 	# uniquement quand le monde change (case éditée, pan, dézoom, thème...).
 	if app != null and app.screen == "edit" and app.mode == "play":
+		# ghosting GBA : mémorise les dernières positions (joueur + ennemis + projectiles)
+		if int(app.level_props.get("gfx", 0)) == 3:
+			pos_hist.push_front(ppos)
+			while pos_hist.size() > 5: pos_hist.pop_back()
+			for en in enemies:
+				en["gh"] = ([en.pos] + en.get("gh", [])).slice(0, 4)
+			for pj in projectiles:
+				pj["gh"] = ([pj.pos] + pj.get("gh", [])).slice(0, 4)
+		elif not pos_hist.is_empty():
+			pos_hist.clear()
 		queue_redraw()
 
 
@@ -1281,8 +1294,9 @@ func _solid_at(p: Vector2, check_loops: bool = true) -> bool:
 	for pl in plats:   # plateformes mobiles : solides aussi en mode Sonic
 		if Rect2(pl.pos, Vector2(int(pl.get("w", 1)) * CELL, 14)).has_point(p):
 			return true
-	if check_loops and loop_exit_cd <= 0.0 and not active_loops.is_empty():
+	if check_loops and not active_loops.is_empty():
 		for lp in active_loops:
+			if loop_exit_cd > 0.0 and lp == last_loop: continue   # loop quitté = traversable
 			var lc: Vector2 = lp.center
 			var lr: float = lp.radius
 			var d: float = (p - lc).length()
@@ -1445,8 +1459,9 @@ func _point_in_loop(p: Vector2) -> bool:
 # capte le sol : mode analytique sur loop (cercle exact), sinon sondes. recale ppos+gangle.
 func _ground_sense(pc: Vector2) -> bool:
 	# === mode analytique : joueur collé au cercle du loop ===
-	if _on_loop and loop_exit_cd <= 0.0 and not active_loops.is_empty():
+	if _on_loop and not active_loops.is_empty():
 		for lp in active_loops:
+			if loop_exit_cd > 0.0 and lp == last_loop: continue
 			var lc: Vector2 = lp.center
 			var lr: float = lp.radius
 			var target_d := lr - LOOP_WALL - PSIZE.y * 0.5   # 111.6px : centre→surface interne
@@ -1455,7 +1470,7 @@ func _ground_sense(pc: Vector2) -> bool:
 			if in_opening:
 				# joueur revenu dans l'ouverture → sortie normale du loop
 				_on_loop = false
-				loop_exit_cd = 1.5
+				last_loop = lp; loop_exit_cd = 0.8
 				gangle = 0.0   # reset pour que le capteur sol retrouve le plancher proprement
 				break
 			var d: float = (pc - lc).length()
@@ -1487,8 +1502,9 @@ func _ground_sense(pc: Vector2) -> bool:
 
 	# entrée loop : mur trouvé au-dessus du sol + côté cohérent avec gsp
 	# (gsp > 0 = va à droite → entrée valide seulement côté droit, theta < 90°)
-	if not _on_loop and loop_exit_cd <= 0.0 and not active_loops.is_empty() and dc < PSIZE.y * 0.5 - 2.0:
+	if not _on_loop and not active_loops.is_empty() and dc < PSIZE.y * 0.5 - 2.0:
 		for lp in active_loops:
+			if loop_exit_cd > 0.0 and lp == last_loop: continue   # pas de re-entrée du loop quitté
 			var lc: Vector2 = lp.center
 			var lr: float = lp.radius
 			var target_d := lr - LOOP_WALL - PSIZE.y * 0.5
@@ -1903,9 +1919,15 @@ func _draw() -> void:
 				"hopper": et = HOPPER
 				"bouncer": et = BOUNCER
 				"shooter": et = SHOOTER
+			if int(app.level_props.get("gfx", 0)) == 3 and en.has("gh"):
+				for gi in range(1, en.gh.size()):
+					draw_tile(self, app._w2s(en.gh[gi] - Vector2(6, 6)), et, app.view_scale, 0.16)
 			draw_tile(self, app._w2s(en.pos - Vector2(6, 6)), et, app.view_scale)
 		for pj in projectiles:
 			if pj.alive:
+				if int(app.level_props.get("gfx", 0)) == 3 and pj.has("gh"):
+					for gi in range(1, pj.gh.size()):
+						draw_circle(app._w2s(pj.gh[gi]), PROJ_SIZE * 0.4 * app.view_scale, Color(1, 0.9, 0.5, 0.14))
 				draw_circle(app._w2s(pj.pos), PROJ_SIZE * 0.5 * app.view_scale, Color("ffce54"))
 				draw_circle(app._w2s(pj.pos), PROJ_SIZE * 0.28 * app.view_scale, Color("fff3c4"))
 		for h in hazards:
@@ -1919,6 +1941,12 @@ func _draw() -> void:
 					draw_circle(fs, (7.0 - float(i) * 0.6) * app.view_scale, Color("ffce54"))
 			elif h.type == "fallblock":
 				draw_tile(self, app._w2s(h.pos), FALLBLOCK, app.view_scale)
+		# ghosting GBA : images-fantômes du joueur aux positions précédentes
+		if int(app.level_props.get("gfx", 0)) == 3 and pos_hist.size() > 1:
+			for gi in range(1, pos_hist.size()):
+				var ga: float = 0.22 * (1.0 - float(gi) / float(pos_hist.size()))
+				var gp: Vector2 = app._w2s(pos_hist[gi])
+				draw_rect(Rect2(gp, PSIZE * app.view_scale), Color(1, 1, 1, ga))
 		var ps: Vector2 = PSIZE * app.squash
 		if _sonic():
 			# perso tourné selon l'angle du sol (gangle)
@@ -2264,6 +2292,12 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 	var col: Color = COLORS.get(t, Color.GRAY); col.a = alpha
 	var cs := CELL * scale
 	var pad := 3.0 * scale
+	# styles basse-déf (GB/GBC) : blocs structurels PLATS (8-bit chunky), sans dégradés
+	if app != null and int(app.level_props.get("gfx", 0)) in [1, 2]:
+		if t == GROUND or t == BREAKABLE or t == DOOR or t == ICE or t == FALLBLOCK or t == CRUMBLE or t == PUSHBLOCK or t == FLOOR:
+			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col)
+			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col.darkened(0.35), false, maxf(1.0, scale))
+			return
 	match t:
 		COIN:
 			ci.draw_circle(p + Vector2(cs, cs) * 0.5, cs * 0.3, col)

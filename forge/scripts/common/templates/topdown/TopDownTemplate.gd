@@ -10,6 +10,7 @@ const TD_ATK_DUR := 0.18    # durée visuelle du coup d'épée
 const TD_ATK_CD := 0.32     # cooldown épée
 const TD_SHOOT_CD := 0.32   # cooldown tir
 const TD_ATK_REACH := 30.0  # portée de l'arc d'épée
+const TD_SHOT_SPEED := 560.0 # vitesse des tirs joueur (>> TD_SPEED, sinon on "colle" ses tirs)
 
 var face := Vector2.RIGHT   # direction regardée
 var pshots := []            # projectiles DU JOUEUR {pos, vel, alive}
@@ -200,7 +201,7 @@ func _td_sword() -> void:
 
 func _td_shoot() -> void:
 	var c := ppos + PSIZE * 0.5
-	pshots.append({"pos": c + face * PSIZE.x * 0.5, "vel": face * PROJ_SPEED, "alive": true})
+	pshots.append({"pos": c + face * PSIZE.x * 0.5, "vel": face * TD_SHOT_SPEED, "alive": true})
 	app._play("jump")
 
 
