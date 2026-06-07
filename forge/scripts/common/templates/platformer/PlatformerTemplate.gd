@@ -23,7 +23,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FLYER, FISH, SPIKER,
 	CHASER, HOPPER, BOUNCER, SHOOTER,
 	FALLBLOCK, FIREBAR, CRUMBLE,
-	BOSS }
+	BOSS, FLOOR }
 const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
 	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC,
@@ -48,7 +48,7 @@ const NAMES := {
 	FLYER: "Volant", FISH: "Poisson", SPIKER: "Piquant",
 	CHASER: "Fantôme", HOPPER: "Sauteur", BOUNCER: "Rebond", SHOOTER: "Tourelle",
 	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable",
-	BOSS: "Boss"
+	BOSS: "Boss", FLOOR: "Sol"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -67,7 +67,7 @@ const COLORS := {
 	FLYER: Color("9b59b6"), FISH: Color("e67e22"), SPIKER: Color("c0392b"),
 	CHASER: Color("ecf0f1"), HOPPER: Color("16a085"), BOUNCER: Color("e84393"), SHOOTER: Color("34495e"),
 	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968"),
-	BOSS: Color("8e1a3d")
+	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f")
 }
 const CONV_SPEED := 95.0
 const CLIMB_SPEED := 200.0
@@ -135,6 +135,7 @@ const DASH_SPEED := 720.0
 const DASH_DUR := 0.16
 const DASH_CD := 0.5
 const DASH_IFRAME := 0.22
+const HURT_IFRAME := 1.0    # invulnérabilité après un coup encaissé (PV)
 
 var app: Node = null                    # ForgeApp (grille, vue, fx, audio)
 @onready var player_sm := $PlayerSM      # XSM (StateRegions)
@@ -173,6 +174,8 @@ var on_ice := false
 var was_in_water := false
 var air_t := 8.0          # réserve d'air courante (noyade)
 var time_left := 0.0      # chrono restant (0 = pas de limite)
+var hearts := 0           # PV courants (0 = système désactivé → mort instantanée)
+var max_hearts := 0
 var pinv := 0.0           # invulnérabilité joueur (i-frames, ex: dash)
 var dash_cd := 0.0
 var dashing := 0.0        # temps restant du dash en cours
@@ -273,6 +276,8 @@ func start_play(from_cursor: bool) -> void:
 	was_in_water = false; air_t = AIR_MAX
 	time_left = _time_limit()
 	pinv = 0.0; dashing = 0.0; dash_cd = 0.0
+	max_hearts = int(app.level_props.get("player_hp", default_hp()))
+	hearts = max_hearts
 	gates_open = false; switch_cd = 0.0; autorun_dir = 1
 	gsp = 0.0; gangle = 0.0; sonic_grounded = false
 	_build_entities()
@@ -411,6 +416,7 @@ func _physics_process(delta: float) -> void:
 			was_in_water = false; air_t = AIR_MAX
 			time_left = _time_limit()
 			pinv = 0.0; dashing = 0.0; dash_cd = 0.0
+			hearts = max_hearts
 		return
 
 	if _sonic():
@@ -423,7 +429,7 @@ func _physics_process(delta: float) -> void:
 		_sonic_physics(delta)
 		_carry_on_plat(delta)
 		_update_enemies(delta)
-		if ppos.y > app.rows * CELL + 200: _die()
+		if ppos.y > app.rows * CELL + 200: _kill()
 		_interactions(delta)
 		queue_redraw(); app.queue_redraw()
 		return
@@ -538,7 +544,7 @@ func _physics_process(delta: float) -> void:
 	_carry_on_plat(delta)
 	_conveyor_push(delta)
 	_update_enemies(delta)
-	if ppos.y > app.rows * CELL + 200: _die()
+	if ppos.y > app.rows * CELL + 200: _kill()
 	_interactions(delta)
 	queue_redraw()
 	app.queue_redraw()
@@ -1552,9 +1558,25 @@ func _cast_down_oneway(origin: Vector2, ext: float) -> float:
 	return INF
 
 
+# PV par défaut du genre (override : top-down = 3). 0 = mort instantanée.
+func default_hp() -> int: return 0
+
+
+# dégât encaissé : perd un cœur si PV actifs (i-frames), sinon mort réelle
 func _die() -> void:
-	if dead or pinv > 0.0: return   # i-frames (dash) → invulnérable
-	dead = true; death_t = 0.7
+	if dead or pinv > 0.0: return   # i-frames (dash/dégât) → invulnérable
+	if max_hearts > 0 and hearts > 1:
+		hearts -= 1; pinv = HURT_IFRAME
+		app._emit(ppos + PSIZE * 0.5, 10, Color("e74c3c"), 220.0, 0.4, false, 4.0)
+		app._shake(5.0, 0.2); Input.start_joy_vibration(0, 0.5, 0.3, 0.15); app._play("death")
+		return
+	_kill()
+
+
+# mort réelle (chute / chrono / dernier cœur)
+func _kill() -> void:
+	if dead: return
+	dead = true; death_t = 0.7; hearts = 0
 	app._emit(ppos + PSIZE * 0.5, 16, Color("ecf0f1"), 260.0, 0.5, true, 4.0)
 	app._shake(9.0, 0.30)
 	Input.start_joy_vibration(0, 0.6, 0.7, 0.30); app._play("death")
@@ -1567,7 +1589,7 @@ func _interactions(delta: float) -> void:
 		time_left -= delta
 		if time_left <= 0.0:
 			time_left = 0.0
-			app._shake(6.0, 0.2); _die()
+			app._shake(6.0, 0.2); _kill()
 			return
 	for c in _cells(Rect2(ppos, PSIZE)):
 		match app.grid.get(c, EMPTY):
@@ -1680,7 +1702,7 @@ func _update_air(delta: float, in_water: bool) -> void:
 		air_t -= delta
 		if air_t <= 0.0:
 			air_t = AIR_MAX
-			_die()
+			_kill()
 	else:
 		air_t = AIR_MAX
 
@@ -1880,6 +1902,12 @@ func _draw_loop_ring(center_s: Vector2, r_s: float) -> void:
 
 
 # ================================================================ PARALLAX
+# un genre peut désactiver le parallax (collines/nuages) → fond plat
+func _wants_parallax() -> bool: return true
+# couche de sol automatique sous tout (override par genre, ex: top-down)
+func _draw_ground(_clip_r: Rect2) -> void: pass
+
+
 func _draw_parallax(_vp: Vector2, lvl_r: Rect2) -> void:
 	var vo: Vector2 = app.view_origin; var vs: float = app.view_scale
 	var bt: float = lvl_r.position.y + lvl_r.size.y
@@ -1916,6 +1944,11 @@ func _draw_parallax(_vp: Vector2, lvl_r: Rect2) -> void:
 			layers.append({"f": 0.60, "k": "hill", "c": Color("8b4513"), "h": 0.20, "fr": 0.0078, "ph": 4.2})
 		_:
 			draw_rect(lvl_r, Color("223349"))
+	# fond plat (ex: top-down) : on garde la couleur + les décors, mais pas collines/nuages
+	if not _wants_parallax():
+		layers.clear()
+	# couche de sol auto (ex: top-down dessine un sol dallé sous tout) — base : rien
+	_draw_ground(clip_r)
 	# décors du créateur ajoutés comme couches (selon leur profondeur)
 	for dd in app.bg_deco:
 		layers.append({"f": float(dd["factor"]), "k": "deco", "d": dd})

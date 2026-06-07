@@ -22,11 +22,34 @@ const TD_CATS := [
 	{"name": "Mur",     "tiles": [GROUND, BREAKABLE]},
 	{"name": "Repères", "tiles": [SPAWN, GOAL, DOOR, CHECKPOINT]},
 	{"name": "Items",   "tiles": [COIN, KEY]},
-	{"name": "Ennemis", "tiles": [CHASER, FLYER, SHOOTER, BOSS]},
+	{"name": "Ennemis", "tiles": [ENEMY, CHASER, FLYER, SHOOTER, BOSS]},
 	{"name": "Décor",   "tiles": [PALM, TREE, BUSH, FLOWER]},
 ]
 func categories() -> Array: return TD_CATS
 func movplat_tile() -> int: return -1   # pas de plateforme mobile en top-down
+func default_hp() -> int: return 3      # PV par défaut en top-down (cœurs activés)
+func _wants_parallax() -> bool: return false   # top-down : fond plat (pas de collines)
+
+
+# sol dallé automatique sous TOUT le niveau (les objets se posent dessus sans l'écraser)
+func _draw_ground(_clip_r: Rect2) -> void:
+	var vp := get_viewport_rect().size
+	var vs: float = app.view_scale
+	var w_tl: Vector2 = app._s2w(Vector2.ZERO)
+	var w_br: Vector2 = app._s2w(vp)
+	var cx0: int = maxi(int(floor(w_tl.x / CELL)), 0)
+	var cx1: int = mini(int(floor(w_br.x / CELL)) + 1, app.cols - 1)
+	var cy0: int = maxi(int(floor(w_tl.y / CELL)), 0)
+	var cy1: int = mini(int(floor(w_br.y / CELL)) + 1, app.rows - 1)
+	var fc: Color = COLORS[FLOOR]
+	var join: Color = fc.darkened(0.12)
+	var cs: float = CELL * vs
+	for cy in range(cy0, cy1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var p: Vector2 = app._w2s(Vector2(cx * CELL, cy * CELL))
+			draw_rect(Rect2(p, Vector2(cs, cs)), fc)
+			draw_line(p, p + Vector2(cs, 0), join, 1.0)
+			draw_line(p, p + Vector2(0, cs), join, 1.0)
 
 # pas de saut : l'action A déclenche l'épée (lue en direct dans _physics_process)
 func jump_pressed() -> void: pass
@@ -42,6 +65,7 @@ func seed_demo() -> void:
 	for y in range(h):
 		app.grid[Vector2i(0, y)] = GROUND
 		app.grid[Vector2i(w - 1, y)] = GROUND
+	# (sol dessiné automatiquement par _draw_ground — pas besoin de le peindre)
 	# quelques obstacles
 	for y in range(4, 8): app.grid[Vector2i(10, y)] = GROUND
 	app.grid[Vector2i(3, 7)] = SPAWN
@@ -66,7 +90,7 @@ func _physics_process(delta: float) -> void:
 			_build_entities()
 			_place_player(respawn_cell)
 			pvel = Vector2.ZERO
-			pinv = 0.0; dashing = 0.0; dash_cd = 0.0
+			pinv = 0.0; dashing = 0.0; dash_cd = 0.0; hearts = max_hearts
 		queue_redraw(); app.queue_redraw()
 		return
 
@@ -196,6 +220,7 @@ func _td_enemies(delta: float) -> void:
 			"flyer":   _enemy_flyer(en, delta)
 			"boss":    _enemy_boss(en, delta)
 			"shooter": _td_shooter(en, delta)
+			"walker":  _td_patrol(en, delta)
 			_:         _enemy_chaser(en, delta)
 		var esz: float = BOSS_SIZE if t == "boss" else float(ESIZE)
 		# bloque sur les murs (sauf le boss qui vole/charge à travers)
@@ -208,6 +233,20 @@ func _td_enemies(delta: float) -> void:
 				pass
 			else:
 				_die()
+
+
+# patrouilleur top-down : avance en 4 directions, rebondit sur les murs (sans gravité)
+func _td_patrol(en: Dictionary, delta: float) -> void:
+	if not en.has("tdv"):
+		var dirs := [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]
+		en.tdv = dirs[randi() % 4]
+	var np: Vector2 = en.pos + en.tdv * ESPEED * delta
+	var cc := Vector2i(int((np.x + ESIZE * 0.5) / CELL), int((np.y + ESIZE * 0.5) / CELL))
+	if _is_full_solid(app.grid.get(cc, EMPTY)) or np.x < 0 or np.y < 0 \
+			or np.x > app.cols * CELL - ESIZE or np.y > app.rows * CELL - ESIZE:
+		en.tdv = -en.tdv   # demi-tour au mur / bord
+	else:
+		en.pos = np
 
 
 # tourelle top-down : fixe (pas de gravité), tire vers le joueur à intervalle
@@ -233,6 +272,9 @@ func _draw() -> void:
 		if s.alive:
 			draw_circle(app._w2s(s.pos), 7.0 * vs, Color("9be7ff"))
 			draw_circle(app._w2s(s.pos), 4.0 * vs, Color("ffffff"))
+	# clignote pendant l'invulnérabilité (dégât/dash) → saute le rendu 1 frame sur 2
+	if pinv > 0.0 and int(pinv * 20.0) % 2 == 0:
+		return
 	# joueur vu de dessus : disque (recouvre le carré du parent) + regard + arme
 	var ctr: Vector2 = app._w2s(ppos + PSIZE * 0.5)
 	var rad: float = PSIZE.x * 0.5 * vs
@@ -256,14 +298,21 @@ func _draw() -> void:
 		draw_line(ctr + face * rad * 0.6, ctr + face * (rad + 10.0 * vs), Color("bdc3c7"), 3.0 * vs)
 
 
-# tuiles top-down : le mur (GROUND) a un rendu pierre dédié ; le reste réutilise le parent
+# tuiles top-down : mur (GROUND) pierre dédiée + sol (FLOOR) dallé ; reste = parent
 func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, world := false, surface := true) -> void:
+	var cs := CELL * scale
 	if t == GROUND:
-		var cs := CELL * scale
 		var c := Color("4a5568")
 		ci.draw_rect(Rect2(p, Vector2(cs, cs)), c)
 		ci.draw_rect(Rect2(p, Vector2(cs, maxf(2.0, cs * 0.16))), c.lightened(0.18))
 		ci.draw_rect(Rect2(p + Vector2(0, cs * 0.84), Vector2(cs, maxf(2.0, cs * 0.16))), c.darkened(0.3))
 		ci.draw_rect(Rect2(p, Vector2(cs, cs)), c.darkened(0.45), false, maxf(1.0, scale))
+		return
+	if t == FLOOR:
+		var fc: Color = COLORS[FLOOR]
+		ci.draw_rect(Rect2(p, Vector2(cs, cs)), fc)
+		# joint de dalle (croix discrète)
+		ci.draw_line(p + Vector2(cs * 0.5, 0), p + Vector2(cs * 0.5, cs), fc.darkened(0.12), maxf(1.0, scale))
+		ci.draw_line(p + Vector2(0, cs * 0.5), p + Vector2(cs, cs * 0.5), fc.darkened(0.12), maxf(1.0, scale))
 		return
 	super(ci, p, t, scale, alpha, world, surface)

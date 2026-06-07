@@ -826,6 +826,7 @@ func _open_menu() -> void:
 		"Victoire · Pièces: %s" % (str(int(level_props.get("win_coins", 0))) if int(level_props.get("win_coins", 0)) > 0 else "OFF"),
 		"Victoire · Tuer tous: %s" % ("ON" if level_props.get("win_killall", false) else "OFF"),
 		"Victoire · Temps: %s" % ((str(int(level_props.get("time_limit", 0))) + "s") if int(level_props.get("time_limit", 0)) > 0 else "OFF"),
+		"PV joueur (cœurs): %s" % (str(int(level_props.get("player_hp", tmpl.default_hp()))) if int(level_props.get("player_hp", tmpl.default_hp())) > 0 else "OFF"),
 		"Musique: %s" % ("ON" if music_on else "OFF"),
 		"FPS (debug): %s" % ("ON" if show_fps else "OFF"),
 		"Générer avec IA...",
@@ -1060,13 +1061,17 @@ func _menu_select() -> void:
 			level_props["time_limit"] = _cycle_preset(int(level_props.get("time_limit", 0)), [0, 30, 60, 90])
 			var tl: int = int(level_props["time_limit"])
 			_set_toast("Victoire · Temps : %s" % ((str(tl) + "s") if tl > 0 else "désactivé"))
-		13: _toggle_music()
-		14:
+		13:
+			level_props["player_hp"] = _cycle_preset(int(level_props.get("player_hp", tmpl.default_hp())), [0, 3, 5])
+			var hp: int = int(level_props["player_hp"])
+			_set_toast("PV joueur : %s" % (str(hp) + " cœurs" if hp > 0 else "désactivé"))
+		14: _toggle_music()
+		15:
 			show_fps = not show_fps
 			_set_toast("FPS %s" % ("ON" if show_fps else "OFF"))
-		15: _open_ai_panel()
-		16: _save_current(); states.change_state("ListState")
-		17: pass
+		16: _open_ai_panel()
+		17: _save_current(); states.change_state("ListState")
+		18: pass
 	menu_open = false
 	queue_redraw(); _redraw_world()   # vidage/thème/sonic peuvent changer le monde
 
@@ -1241,6 +1246,8 @@ func _new_project(template_id: String) -> void:
 	undo_stack.clear(); redo_stack.clear()
 	tmpl.seed_demo()
 	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear()
+	# défaut par genre : top-down a les cœurs activés (3), platformer non
+	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
 	_save_current()
 	mode = "edit"; dash_sel = 0
@@ -1561,13 +1568,17 @@ func _screenedit_process(delta: float) -> void:
 
 func _auto_resize_cols() -> void:
 	var max_x := -1
+	var max_y := -1
 	for k in grid:
-		if k.x > max_x:
-			max_x = k.x
+		if k.x > max_x: max_x = k.x
+		if k.y > max_y: max_y = k.y
 	var new_cols := clampi(max_x + 5, 16, 200)
-	if new_cols != cols:
-		cols = new_cols
-		cursor.x = mini(cursor.x, cols - 1)
+	# hauteur du niveau = contenu (mini = hauteur écran), pour que la caméra suive en Y
+	var base_rows := maxi(6, int((get_viewport_rect().size.y - TOPBAR - BOTTOM) / CELL))
+	var new_rows := clampi(max_y + 5, base_rows, 200)
+	if new_cols != cols or new_rows != rows:
+		cols = new_cols; rows = new_rows
+		cursor.x = mini(cursor.x, cols - 1); cursor.y = mini(cursor.y, rows - 1)
 		queue_redraw(); _redraw_world()
 
 
@@ -1852,6 +1863,15 @@ func _draw_topbar(vp: Vector2) -> void:
 		if need_coins > 0 and tmpl.coins_got < need_coins: coin_col = Color("e67e22")
 		_text(f, Vector2(240, 34), coin_str, coin_col, 18)
 		if tmpl.has_key: _text(f, Vector2(560, 34), "🔑", Color("f1c40f"), 20)
+		# PV joueur : cœurs (pleins/vides)
+		if tmpl.max_hearts > 0:
+			for i in tmpl.max_hearts:
+				var hc := Color("e74c3c") if i < tmpl.hearts else Color(1, 1, 1, 0.18)
+				var hx := 240.0 + i * 26.0
+				draw_circle(Vector2(hx, 52), 7.0, hc)
+				draw_circle(Vector2(hx + 9, 52), 7.0, hc)
+				draw_colored_polygon(PackedVector2Array([
+					Vector2(hx - 6, 54), Vector2(hx + 15, 54), Vector2(hx + 4.5, 66)]), hc)
 		# objectif "tuer tous" : compteur d'ennemis restants
 		if level_props.get("win_killall", false):
 			var left: int = tmpl._enemies_left()
