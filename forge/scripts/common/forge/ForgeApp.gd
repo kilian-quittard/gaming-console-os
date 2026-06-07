@@ -1900,9 +1900,17 @@ func _draw_hints(vp: Vector2) -> void:
 			x = _badge(x, y, "R2", "Vue")
 			x = _badge(x, y, "ST", "Tester")
 			x = _badge(x, y, "Sel", "Menu")
+	elif cur_template == "topdown":
+		x = _badge(x, y, "←→↑↓", "Bouger")
+		x = _badge(x, y, "A", "Épée")
+		x = _badge(x, y, "X", "Tir")
+		x = _badge(x, y, "R1", "Dash")
+		x = _badge(x, y, "Y", "Rejouer")
+		x = _badge(x, y, "ST", "Éditeur")
 	else:
 		x = _badge(x, y, "←→", "Bouger")
 		x = _badge(x, y, "A", "Sauter")
+		x = _badge(x, y, "R1", "Dash")
 		x = _badge(x, y, "Y", "Rejouer")
 		x = _badge(x, y, "ST", "Éditeur")
 

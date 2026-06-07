@@ -130,6 +130,11 @@ const WATER_RISE := -280.0  # vitesse de montée max
 const WATER_SWIM := -310.0  # impulsion de brasse (répétable)
 const WATER_DRAG := 0.86    # amortissement horizontal par frame
 const AIR_MAX := 8.0        # secondes d'air avant noyade (si noyade activée)
+# dash / esquive (les 2 genres) : burst + i-frames + cooldown
+const DASH_SPEED := 720.0
+const DASH_DUR := 0.16
+const DASH_CD := 0.5
+const DASH_IFRAME := 0.22
 
 var app: Node = null                    # ForgeApp (grille, vue, fx, audio)
 @onready var player_sm := $PlayerSM      # XSM (StateRegions)
@@ -168,6 +173,10 @@ var on_ice := false
 var was_in_water := false
 var air_t := 8.0          # réserve d'air courante (noyade)
 var time_left := 0.0      # chrono restant (0 = pas de limite)
+var pinv := 0.0           # invulnérabilité joueur (i-frames, ex: dash)
+var dash_cd := 0.0
+var dashing := 0.0        # temps restant du dash en cours
+var dash_dir := Vector2.RIGHT
 var prev_vx := 0.0
 var gates_open := false
 var switch_cd := 0.0
@@ -263,6 +272,7 @@ func start_play(from_cursor: bool) -> void:
 	on_ladder = false; climbing = false; on_ice = false; prev_vx = 0.0
 	was_in_water = false; air_t = AIR_MAX
 	time_left = _time_limit()
+	pinv = 0.0; dashing = 0.0; dash_cd = 0.0
 	gates_open = false; switch_cd = 0.0; autorun_dir = 1
 	gsp = 0.0; gangle = 0.0; sonic_grounded = false
 	_build_entities()
@@ -355,6 +365,25 @@ func do_jump() -> void:
 	Input.start_joy_vibration(0, 0.10, 0.25, 0.07); app._play("jump")
 
 
+# ---- dash / esquive (partagé par les genres) ----
+func _tick_player_timers(delta: float) -> void:
+	if pinv > 0.0: pinv -= delta
+	if dash_cd > 0.0: dash_cd -= delta
+	if dashing > 0.0: dashing -= delta
+
+
+func _dash_input() -> bool:
+	return Input.is_key_pressed(KEY_SHIFT) or Input.is_joy_button_pressed(0, JOY_BUTTON_RIGHT_SHOULDER)
+
+
+func _start_dash(dir: Vector2) -> void:
+	if dir.length() < 0.1: dir = Vector2(1, 0)
+	dashing = DASH_DUR; dash_cd = DASH_CD; pinv = DASH_IFRAME
+	dash_dir = dir.normalized()
+	app._emit(ppos + PSIZE * 0.5, 8, Color("9be7ff"), 200.0, 0.3, false, 3.0)
+	app._shake(2.0, 0.08); app._play("jump")
+
+
 func _process(_delta: float) -> void:
 	# En play : redraw continu (perso/ennemis/fx bougent).
 	# En édition : le monde est statique ; ForgeApp déclenche tmpl.queue_redraw()
@@ -381,10 +410,16 @@ func _physics_process(delta: float) -> void:
 			gsp = 0.0; sonic_grounded = false; on_floor = false
 			was_in_water = false; air_t = AIR_MAX
 			time_left = _time_limit()
+			pinv = 0.0; dashing = 0.0; dash_cd = 0.0
 		return
 
 	if _sonic():
 		_move_plats(delta)
+		_tick_player_timers(delta)
+		if dashing <= 0.0 and dash_cd <= 0.0 and _dash_input():
+			_start_dash(Vector2(signf(gsp) if gsp != 0.0 else 1.0, 0.0))
+		if dashing > 0.0:
+			gsp = dash_dir.x * DASH_SPEED
 		_sonic_physics(delta)
 		_carry_on_plat(delta)
 		_update_enemies(delta)
@@ -439,6 +474,15 @@ func _physics_process(delta: float) -> void:
 		app._shake(2.0, 0.08)
 	was_in_water = in_water
 	_update_air(delta, in_water)
+
+	# dash horizontal (esquive) : override la vitesse pendant le dash
+	_tick_player_timers(delta)
+	if dashing <= 0.0 and dash_cd <= 0.0 and _dash_input():
+		var dx := signf(float(input_x)) if input_x != 0 else signf(pvel.x)
+		_start_dash(Vector2(dx if dx != 0.0 else 1.0, 0.0))
+	if dashing > 0.0:
+		pvel.x = dash_dir.x * DASH_SPEED
+		pvel.y = 0.0
 
 	_move_plats(delta)
 	var rects := _solid_rects()
@@ -1509,7 +1553,7 @@ func _cast_down_oneway(origin: Vector2, ext: float) -> float:
 
 
 func _die() -> void:
-	if dead: return
+	if dead or pinv > 0.0: return   # i-frames (dash) → invulnérable
 	dead = true; death_t = 0.7
 	app._emit(ppos + PSIZE * 0.5, 16, Color("ecf0f1"), 260.0, 0.5, true, 4.0)
 	app._shake(9.0, 0.30)

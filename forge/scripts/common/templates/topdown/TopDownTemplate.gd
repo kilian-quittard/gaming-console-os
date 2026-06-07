@@ -66,6 +66,7 @@ func _physics_process(delta: float) -> void:
 			_build_entities()
 			_place_player(respawn_cell)
 			pvel = Vector2.ZERO
+			pinv = 0.0; dashing = 0.0; dash_cd = 0.0
 		queue_redraw(); app.queue_redraw()
 		return
 
@@ -74,7 +75,14 @@ func _physics_process(delta: float) -> void:
 	if mv.length() > 0.0:
 		mv = mv.normalized()
 		face = mv
-	_td_move(mv, delta)
+	# dash / roulade : burst dans la direction regardée (i-frames)
+	_tick_player_timers(delta)
+	if dashing <= 0.0 and dash_cd <= 0.0 and _dash_input():
+		_start_dash(face)
+	if dashing > 0.0:
+		_td_move(dash_dir, delta * (DASH_SPEED / TD_SPEED))   # même collision, vitesse dash
+	else:
+		_td_move(mv, delta)
 
 	# combat
 	if atk_t > 0.0: atk_t -= delta
@@ -177,23 +185,42 @@ func _td_damage(en: Dictionary) -> void:
 		app._shake(3.0, 0.1); app._play("stomp")
 
 
-# ennemis : réutilise les comportements hérités (chasseur/volant/boss = sans gravité),
-# contact = mort du joueur (pas de stomp en top-down)
+# ennemis : comportements sans gravité ; bloqués par les murs ; contact = mort
 func _td_enemies(delta: float) -> void:
 	var pr := Rect2(ppos, PSIZE)
 	for en in enemies:
 		if not en.alive: continue
-		match en.get("type", "chaser"):
+		var t: String = en.get("type", "chaser")
+		var prev: Vector2 = en.pos
+		match t:
 			"flyer":   _enemy_flyer(en, delta)
 			"boss":    _enemy_boss(en, delta)
-			"shooter": _enemy_shooter(en, delta)
+			"shooter": _td_shooter(en, delta)
 			_:         _enemy_chaser(en, delta)
-		var esz: float = BOSS_SIZE if en.type == "boss" else float(ESIZE)
+		var esz: float = BOSS_SIZE if t == "boss" else float(ESIZE)
+		# bloque sur les murs (sauf le boss qui vole/charge à travers)
+		if t != "boss":
+			var cc := Vector2i(int((en.pos.x + esz * 0.5) / CELL), int((en.pos.y + esz * 0.5) / CELL))
+			if _is_full_solid(app.grid.get(cc, EMPTY)):
+				en.pos = prev
 		if pr.intersects(Rect2(en.pos, Vector2(esz, esz))):
 			if en.type == "boss" and en.inv > 0.0:
 				pass
 			else:
 				_die()
+
+
+# tourelle top-down : fixe (pas de gravité), tire vers le joueur à intervalle
+func _td_shooter(en: Dictionary, delta: float) -> void:
+	en.shoot_t = en.get("shoot_t", SHOOT_INTERVAL) - delta
+	if en.shoot_t <= 0.0:
+		en.shoot_t = SHOOT_INTERVAL
+		var ctr: Vector2 = en.pos + Vector2(ESIZE, ESIZE) * 0.5
+		var to: Vector2 = (ppos + PSIZE * 0.5) - ctr
+		if to.length() < 1.0: to = Vector2(1, 0)
+		projectiles.append({"pos": ctr, "vel": to.normalized() * PROJ_SPEED, "alive": true})
+		app._emit(ctr, 4, COLORS[SHOOTER].lightened(0.4), 120.0, 0.2, false, 2.5)
+		app._play("spring")
 
 
 func _draw() -> void:
@@ -206,12 +233,37 @@ func _draw() -> void:
 		if s.alive:
 			draw_circle(app._w2s(s.pos), 7.0 * vs, Color("9be7ff"))
 			draw_circle(app._w2s(s.pos), 4.0 * vs, Color("ffffff"))
-	# indicateur de direction + coup d'épée
+	# joueur vu de dessus : disque (recouvre le carré du parent) + regard + arme
 	var ctr: Vector2 = app._w2s(ppos + PSIZE * 0.5)
-	var tip: Vector2 = ctr + face * 16.0 * vs
-	var perp := Vector2(-face.y, face.x) * 6.0 * vs
-	draw_colored_polygon(PackedVector2Array([tip, ctr + perp, ctr - perp]), Color("2c3e50"))
+	var rad: float = PSIZE.x * 0.5 * vs
+	# traînée de dash
+	if dashing > 0.0:
+		for i in 3:
+			draw_circle(ctr - dash_dir * float(i + 1) * 10.0 * vs, rad * (1.0 - i * 0.22), Color(0.6, 0.9, 1.0, 0.25))
+	draw_circle(ctr, rad, Color("ecf0f1"))
+	draw_circle(ctr, rad, Color("2c3e50"), false, 2.0 * vs)
+	# 2 yeux orientés vers la direction regardée
+	var fperp := Vector2(-face.y, face.x)
+	for sgn in [-1.0, 1.0]:
+		draw_circle(ctr + face * rad * 0.35 + fperp * sgn * rad * 0.4, rad * 0.18, Color("2c3e50"))
+	# coup d'épée : lame qui balaie devant
 	if atk_t > 0.0:
-		var a0 := face.angle() - 0.9
-		var a1 := face.angle() + 0.9
-		draw_arc(ctr, (PSIZE.x * 0.5 + TD_ATK_REACH) * vs, a0, a1, 14, Color(1, 1, 1, 0.9), 4.0 * vs)
+		var a0 := face.angle() - 0.95
+		var a1 := face.angle() + 0.95
+		draw_arc(ctr, (PSIZE.x * 0.5 + TD_ATK_REACH) * vs, a0, a1, 16, Color(1, 1, 1, 0.95), 5.0 * vs)
+	else:
+		# petite "arme" tenue dans la direction (indicateur statique)
+		draw_line(ctr + face * rad * 0.6, ctr + face * (rad + 10.0 * vs), Color("bdc3c7"), 3.0 * vs)
+
+
+# tuiles top-down : le mur (GROUND) a un rendu pierre dédié ; le reste réutilise le parent
+func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, world := false, surface := true) -> void:
+	if t == GROUND:
+		var cs := CELL * scale
+		var c := Color("4a5568")
+		ci.draw_rect(Rect2(p, Vector2(cs, cs)), c)
+		ci.draw_rect(Rect2(p, Vector2(cs, maxf(2.0, cs * 0.16))), c.lightened(0.18))
+		ci.draw_rect(Rect2(p + Vector2(0, cs * 0.84), Vector2(cs, maxf(2.0, cs * 0.16))), c.darkened(0.3))
+		ci.draw_rect(Rect2(p, Vector2(cs, cs)), c.darkened(0.45), false, maxf(1.0, scale))
+		return
+	super(ci, p, t, scale, alpha, world, surface)
