@@ -23,7 +23,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FLYER, FISH, SPIKER,
 	CHASER, HOPPER, BOUNCER, SHOOTER,
 	FALLBLOCK, FIREBAR, CRUMBLE,
-	BOSS, FLOOR }
+	BOSS, FLOOR, PLATE, PUSHBLOCK }
 const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
 	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC,
@@ -48,7 +48,7 @@ const NAMES := {
 	FLYER: "Volant", FISH: "Poisson", SPIKER: "Piquant",
 	CHASER: "Fantôme", HOPPER: "Sauteur", BOUNCER: "Rebond", SHOOTER: "Tourelle",
 	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable",
-	BOSS: "Boss", FLOOR: "Sol"
+	BOSS: "Boss", FLOOR: "Sol", PLATE: "Dalle", PUSHBLOCK: "Bloc poussable"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -67,7 +67,7 @@ const COLORS := {
 	FLYER: Color("9b59b6"), FISH: Color("e67e22"), SPIKER: Color("c0392b"),
 	CHASER: Color("ecf0f1"), HOPPER: Color("16a085"), BOUNCER: Color("e84393"), SHOOTER: Color("34495e"),
 	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968"),
-	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f")
+	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f"), PLATE: Color("d4a017"), PUSHBLOCK: Color("8d6e63")
 }
 const CONV_SPEED := 95.0
 const CLIMB_SPEED := 200.0
@@ -155,7 +155,7 @@ var won := false
 var death_t := 0.0
 var has_key := false
 var keys := {}            # clés ramassées par couleur : {"rouge":1,...}
-const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71")}
+const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 var spawn_cell := Vector2i(4, 8)
 var respawn_cell := Vector2i(4, 8)
 var last_from_cursor := false
@@ -184,6 +184,11 @@ var dashing := 0.0        # temps restant du dash en cours
 var dash_dir := Vector2.RIGHT
 var prev_vx := 0.0
 var gates_open := false
+var plate_open := false    # (visuel) au moins une dalle enfoncée
+var plate_cells := []      # positions des dalles (snapshot au start)
+var sw_open := {}          # interrupteurs par couleur : couleur -> bool (toggle)
+var open_gate_cells := {}  # cellules de grille ouvertes ce frame (par groupe couleur)
+var push_home := []        # positions initiales des blocs poussables (reset au respawn)
 var switch_cd := 0.0
 var autorun_dir := 1
 # mode Sonic (physique à momentum, activé par level_props.sonic)
@@ -280,6 +285,10 @@ func start_play(from_cursor: bool) -> void:
 	pinv = 0.0; dashing = 0.0; dash_cd = 0.0
 	max_hearts = int(app.level_props.get("player_hp", default_hp()))
 	hearts = max_hearts
+	plate_cells = []
+	for k in app.grid:
+		if app.grid[k] == PLATE: plate_cells.append(k)
+	sw_open = {}; open_gate_cells = {}
 	gates_open = false; switch_cd = 0.0; autorun_dir = 1
 	gsp = 0.0; gangle = 0.0; sonic_grounded = false
 	_build_entities()
@@ -421,6 +430,7 @@ func _physics_process(delta: float) -> void:
 			hearts = max_hearts
 		return
 
+	_update_plates()
 	if _sonic():
 		_move_plats(delta)
 		_tick_player_timers(delta)
@@ -627,11 +637,10 @@ func _carry_on_plat(delta: float) -> void:
 func _solid_rects() -> Array:
 	var out := []
 	for c in _cells(Rect2(ppos - Vector2(CELL, CELL), PSIZE + Vector2(CELL, CELL) * 2)):
-		var t: int = app.grid.get(c, EMPTY)
 		# friable rompue / bloc tombant déclenché → plus solides
 		if crumbled.has(c) or fb_trig.has(c):
 			continue
-		if _is_full_solid(t) and not _under_slope(c):
+		if _cell_solid(c) and not _under_slope(c):
 			out.append(_cell_rect(c))
 	for p in plats:
 		out.append(Rect2(p.pos, Vector2(int(p.get("w", 1)) * CELL, 14)))
@@ -649,9 +658,38 @@ func _oneway_rects() -> Array:
 
 func _is_full_solid(t: int) -> bool:
 	if t == GROUND or t == BREAKABLE or t == DOOR or t == ICE or t == CONV_R or t == CONV_L: return true
-	if t == FALLBLOCK or t == CRUMBLE: return true
-	if t == GATE and not gates_open: return true
+	if t == FALLBLOCK or t == CRUMBLE or t == PUSHBLOCK: return true
 	return false
+
+
+# solidité par CELLULE : gère les grilles par groupe de couleur (ouvertes = non solides)
+func _cell_solid(c: Vector2i) -> bool:
+	if crumbled.has(c) or fb_trig.has(c): return false
+	var t: int = app.grid.get(c, EMPTY)
+	if t == GATE: return not open_gate_cells.has(c)
+	return _is_full_solid(t)
+
+
+# puzzle : grilles ouvertes par GROUPE DE COULEUR.
+# une grille couleur C s'ouvre si l'interrupteur C est ON, OU si toutes les dalles C sont enfoncées.
+func _update_plates() -> void:
+	open_gate_cells = {}
+	var pr := Rect2(ppos, PSIZE)
+	plate_open = false
+	# par couleur : toutes les dalles enfoncées ? (ET)
+	var all_pressed := {}   # couleur -> bool
+	for c in plate_cells:
+		var col := _cell_color(c)
+		if not all_pressed.has(col): all_pressed[col] = true
+		var on: bool = pr.intersects(_cell_rect(c)) or int(app.grid.get(c, EMPTY)) == PUSHBLOCK
+		if on: plate_open = true        # (visuel) au moins une dalle enfoncée
+		else: all_pressed[col] = false
+	# grilles : ouvre selon interrupteur OU dalles de la même couleur
+	for k in app.grid:
+		if app.grid[k] == GATE:
+			var gc := _cell_color(k)
+			if bool(sw_open.get(gc, false)) or bool(all_pressed.get(gc, false)):
+				open_gate_cells[k] = true
 
 
 func _hit_head() -> void:
@@ -1132,7 +1170,7 @@ func _update_hazards(delta: float) -> void:
 func _solid_tile(c: Vector2i) -> bool:
 	if crumbled.has(c) or fb_trig.has(c): return false
 	var t: int = app.grid.get(c, EMPTY)
-	return _is_full_solid(t) or t == ONEWAY
+	return _cell_solid(c) or t == ONEWAY
 
 
 func _is_slope(t: int) -> bool:
@@ -1236,6 +1274,7 @@ func _solid_at(p: Vector2, check_loops: bool = true) -> bool:
 	if crumbled.has(c) or fb_trig.has(c): t = EMPTY   # friable rompue / bloc tombé → non solide
 	if t != EMPTY:
 		if _is_full_solid(t): return true
+		if t == GATE and not open_gate_cells.has(c): return true   # grille fermée (couleur)
 		if _is_slope(t):
 			var lx: float = clampf(p.x - c.x * CELL, 0.0, CELL)
 			if p.y >= _slope_surface(t, c, lx): return true
@@ -1625,9 +1664,10 @@ func _interactions(delta: float) -> void:
 					app._shake(3.0, 0.1); app._play("spring")
 			SWITCH:
 				if switch_cd <= 0.0:
-					gates_open = not gates_open
+					var scol := _cell_color(c)
+					sw_open[scol] = not bool(sw_open.get(scol, false))
 					switch_cd = 0.4
-					app._emit(_cell_center(c), 12, COLORS[SWITCH], 200.0, 0.4, true, 4.0)
+					app._emit(_cell_center(c), 12, KEY_COLORS.get(scol, COLORS[SWITCH]), 200.0, 0.4, true, 4.0)
 					app._shake(3.0, 0.1); app._play("key")
 			CHECKPOINT:
 				if respawn_cell != c:
@@ -1796,15 +1836,15 @@ func _draw() -> void:
 		var tk: int = app.grid[k]
 		if app.mode == "play" and (tk == ENEMY or tk == MOVPLAT or tk == FLYER or tk == FISH or tk == SPIKER \
 				or tk == CHASER or tk == HOPPER or tk == BOUNCER or tk == SHOOTER or tk == FIREBAR \
-				or tk == BOSS or crumbled.has(k) or fb_trig.has(k)):
+				or tk == BOSS or crumbled.has(k) or fb_trig.has(k) or (tk == GATE and open_gate_cells.has(k))):
 			continue
 		# autotile vertical (eau/lave) : surface = pas la même tuile juste au-dessus
 		var surf: bool = app.grid.get(Vector2i(k.x, k.y - 1), EMPTY) != tk
 		draw_tile(self, app._w2s(Vector2(k.x * CELL, k.y * CELL)), tk, app.view_scale, 1.0, true, surf)
-		# pastille de couleur sur clés/portes (énigmes : couleur = paire clé↔porte)
-		if tk == KEY or tk == DOOR:
+		# pastille de couleur : groupe d'énigme (clé/porte + interrupteur/grille/dalle)
+		if tk == KEY or tk == DOOR or tk == SWITCH or tk == GATE or tk == PLATE:
 			var kc: Color = KEY_COLORS.get(str(app.cell_cfg.get(k, {}).get("color", "or")), Color.WHITE)
-			draw_circle(app._w2s(Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL)), CELL * 0.16 * app.view_scale, kc)
+			draw_circle(app._w2s(Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL)), CELL * 0.13 * app.view_scale, kc)
 
 	# rendu des loopings (edit : depuis grid, play : depuis active_loops)
 	if app.mode == "play":
@@ -2335,6 +2375,16 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			ci.draw_line(p + Vector2(cs * 0.3, 0), p + Vector2(cs * 0.45, cs), col.darkened(0.3), 1.5 * scale)
 			ci.draw_line(p + Vector2(cs * 0.7, 0), p + Vector2(cs * 0.55, cs), col.darkened(0.3), 1.5 * scale)
 			ci.draw_line(p + Vector2(0, cs * 0.5), p + Vector2(cs, cs * 0.55), col.darkened(0.3), 1.5 * scale)
+		PLATE:
+			# dalle de pression encastrée (s'éclaire quand enfoncée)
+			var pcol: Color = col.lightened(0.25) if plate_open else col
+			ci.draw_rect(Rect2(p + Vector2(pad, cs * 0.5), Vector2(cs - pad * 2, cs * 0.45)), pcol.darkened(0.25))
+			ci.draw_rect(Rect2(p + Vector2(pad * 2, cs * 0.42 if not plate_open else cs * 0.5), Vector2(cs - pad * 4, cs * 0.3)), pcol)
+		PUSHBLOCK:
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col)
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col.darkened(0.35), false, 2.0 * scale)
+			ci.draw_line(p + Vector2(pad, pad), p + Vector2(cs - pad, cs - pad), col.lightened(0.15), 1.5 * scale)
+			ci.draw_line(p + Vector2(cs - pad, pad), p + Vector2(pad, cs - pad), col.lightened(0.15), 1.5 * scale)
 		SPIKE:
 			for i in 3:
 				var bx := p.x + pad + i * (cs - pad * 2) / 3.0
@@ -2445,13 +2495,10 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			ci.draw_rect(Rect2(p + Vector2(pad, cs * 0.55), Vector2(cs - pad * 2, cs * 0.45 - pad)), col.darkened(0.2))
 			ci.draw_rect(Rect2(p + Vector2(cs * 0.28, cs * 0.35), Vector2(cs * 0.44, cs * 0.22)), col)
 		GATE:
-			var open: bool = gates_open and app != null and app.mode == "play"
-			if open:
-				ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col, false, 1.5 * scale)
-			else:
-				for i in 2:
-					ci.draw_rect(Rect2(p + Vector2(cs * (0.22 + i * 0.4), 0), Vector2(cs * 0.16, cs)), col)
-				ci.draw_rect(Rect2(p + Vector2(0, cs * 0.4), Vector2(cs, cs * 0.16)), col)
+			# barreaux fermés (les grilles OUVERTES sont sautées au rendu en play)
+			for i in 2:
+				ci.draw_rect(Rect2(p + Vector2(cs * (0.22 + i * 0.4), 0), Vector2(cs * 0.16, cs)), col)
+			ci.draw_rect(Rect2(p + Vector2(0, cs * 0.4), Vector2(cs, cs * 0.16)), col)
 		LOOP_CENTER:
 			var ctr := p + Vector2(cs, cs) * 0.5
 			ci.draw_circle(ctr, cs * 0.12, col)

@@ -22,6 +22,7 @@ const TD_CATS := [
 	{"name": "Mur",     "tiles": [GROUND, BREAKABLE]},
 	{"name": "Repères", "tiles": [SPAWN, GOAL, DOOR, CHECKPOINT]},
 	{"name": "Items",   "tiles": [COIN, KEY]},
+	{"name": "Méca",    "tiles": [SWITCH, GATE, PLATE, PUSHBLOCK]},
 	{"name": "Ennemis", "tiles": [ENEMY, CHASER, FLYER, SHOOTER, BOSS]},
 	{"name": "Décor",   "tiles": [PALM, TREE, BUSH, FLOWER]},
 ]
@@ -78,6 +79,33 @@ func seed_demo() -> void:
 func start_play(from_cursor: bool) -> void:
 	super(from_cursor)
 	face = Vector2.RIGHT; pshots = []; atk_t = 0.0; atk_cd = 0.0; shoot_cd = 0.0
+	# mémorise la position initiale des blocs poussables (pour reset au respawn)
+	push_home = []
+	for k in app.grid:
+		if app.grid[k] == PUSHBLOCK: push_home.append(k)
+
+
+func _td_restore_blocks() -> void:
+	for k in app.grid.keys():
+		if app.grid[k] == PUSHBLOCK: app.grid.erase(k)
+	for c in plate_cells:
+		app.grid[c] = PLATE          # remet les dalles (au cas où couvertes par un bloc)
+	for c in push_home:
+		app.grid[c] = PUSHBLOCK
+
+
+# pousse un bloc : vers une case vide OU sur une dalle (pour la maintenir enfoncée)
+func _td_push_block(bc: Vector2i, d: Vector2i) -> void:
+	var target := bc + d
+	if target.x < 1 or target.y < 1 or target.x >= app.cols - 1 or target.y >= app.rows - 1:
+		return
+	var tt: int = app.grid.get(target, EMPTY)
+	if tt == EMPTY or tt == PLATE:
+		# en quittant bc : remet une dalle si c'était une case dalle (sinon vide)
+		if plate_cells.has(bc): app.grid[bc] = PLATE
+		else: app.grid.erase(bc)
+		app.grid[target] = PUSHBLOCK   # le bloc couvre la dalle → la maintient enfoncée
+		app._play("stomp")
 
 
 func _physics_process(delta: float) -> void:
@@ -87,13 +115,14 @@ func _physics_process(delta: float) -> void:
 		death_t -= delta
 		if death_t <= 0.0:
 			dead = false
-			_build_entities()
+			_build_entities(); _td_restore_blocks()
 			_place_player(respawn_cell)
 			pvel = Vector2.ZERO
 			pinv = 0.0; dashing = 0.0; dash_cd = 0.0; hearts = max_hearts
 		queue_redraw(); app.queue_redraw()
 		return
 
+	_update_plates()
 	# déplacement 8 directions (croix + stick), sans gravité
 	var mv := Vector2(float(_dir_x()), float(_dir_y()))
 	if mv.length() > 0.0:
@@ -126,16 +155,20 @@ func _td_move(mv: Vector2, delta: float) -> void:
 	var step := mv * TD_SPEED * delta
 	ppos.x += step.x
 	for c in _cells(Rect2(ppos, PSIZE)):
-		if _is_full_solid(app.grid.get(c, EMPTY)):
+		if _cell_solid(c):
 			var r := _cell_rect(c)
 			if Rect2(ppos, PSIZE).intersects(r):
+				if app.grid.get(c, EMPTY) == PUSHBLOCK:
+					_td_push_block(c, Vector2i(signi(int(step.x)), 0))
 				if step.x > 0: ppos.x = r.position.x - PSIZE.x
 				elif step.x < 0: ppos.x = r.position.x + r.size.x
 	ppos.y += step.y
 	for c in _cells(Rect2(ppos, PSIZE)):
-		if _is_full_solid(app.grid.get(c, EMPTY)):
+		if _cell_solid(c):
 			var r := _cell_rect(c)
 			if Rect2(ppos, PSIZE).intersects(r):
+				if app.grid.get(c, EMPTY) == PUSHBLOCK:
+					_td_push_block(c, Vector2i(0, signi(int(step.y))))
 				if step.y > 0: ppos.y = r.position.y - PSIZE.y
 				elif step.y < 0: ppos.y = r.position.y + r.size.y
 	ppos.x = clampf(ppos.x, 0, app.cols * CELL - PSIZE.x)

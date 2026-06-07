@@ -849,9 +849,10 @@ func _cfg_fields_for(t: int) -> Array:
 			{"key": "span",  "label": "Portée",  "opts": [1, 2, 3, 4, 5, 6],         "def": 3},
 			{"key": "speed", "label": "Vitesse", "opts": ["lent", "normal", "rapide"], "def": "normal"},
 		]
-	# clés (11) et portes (12) : couleur (clé d'une couleur ouvre la porte de même couleur)
-	if t == 11 or t == 12:
-		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert"], "def": "or"}]
+	# couleur d'instance : clé/porte (11/12) + interrupteur/grille/dalle (24/25/49)
+	# → relie par groupe de couleur (interrupteur rose ↔ grille rose, etc.)
+	if t == 11 or t == 12 or t == 24 or t == 25 or t == 49:
+		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert", "rose"], "def": "or"}]
 	return []
 
 
