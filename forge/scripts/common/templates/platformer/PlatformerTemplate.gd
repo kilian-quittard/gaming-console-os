@@ -22,13 +22,14 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	LAVA, WATER,
 	FLYER, FISH, SPIKER,
 	CHASER, HOPPER, BOUNCER, SHOOTER,
-	FALLBLOCK, FIREBAR, CRUMBLE }
+	FALLBLOCK, FIREBAR, CRUMBLE,
+	BOSS }
 const PALETTE := [GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLAT, CHECKPOINT, KEY, DOOR,
 	SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC,
 	ONEWAY, LADDER, ICE, CONV_R, CONV_L, SWITCH, GATE, LOOP_CENTER,
 	PALM, TREE, BUSH, FLOWER, LAVA, WATER, FLYER, FISH, SPIKER,
-	CHASER, HOPPER, BOUNCER, SHOOTER, FALLBLOCK, FIREBAR, CRUMBLE]
+	CHASER, HOPPER, BOUNCER, SHOOTER, FALLBLOCK, FIREBAR, CRUMBLE, BOSS]
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -46,7 +47,8 @@ const NAMES := {
 	LAVA: "Lave", WATER: "Eau",
 	FLYER: "Volant", FISH: "Poisson", SPIKER: "Piquant",
 	CHASER: "Fantôme", HOPPER: "Sauteur", BOUNCER: "Rebond", SHOOTER: "Tourelle",
-	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable"
+	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable",
+	BOSS: "Boss"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -64,7 +66,8 @@ const COLORS := {
 	LAVA: Color("e8521f"), WATER: Color("2e86de"),
 	FLYER: Color("9b59b6"), FISH: Color("e67e22"), SPIKER: Color("c0392b"),
 	CHASER: Color("ecf0f1"), HOPPER: Color("16a085"), BOUNCER: Color("e84393"), SHOOTER: Color("34495e"),
-	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968")
+	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968"),
+	BOSS: Color("8e1a3d")
 }
 const CONV_SPEED := 95.0
 const CLIMB_SPEED := 200.0
@@ -105,6 +108,17 @@ const FIREBAR_LEN := 3      # barre de feu : nombre de flammes
 const FIREBAR_SPEED := 2.0  # barre de feu : vitesse de rotation (rad/s)
 const CRUMBLE_DELAY := 0.45 # friable : délai avant rupture sous le joueur
 const FALL_DELAY := 0.35    # bloc tombant : délai avant chute quand on passe dessous
+const BOSS_SIZE := 88.0     # boss : taille (px)
+const BOSS_HP := 5          # boss : nombre de coups (stomp) à encaisser
+const BOSS_ENRAGE_HP := 2   # boss : passe en phase 2 (enrage) à ce nb de PV
+const BOSS_SPEED := 80.0    # boss : vitesse horizontale
+const BOSS_BOB_A := 26.0    # boss : amplitude bobbing
+const BOSS_BOB_F := 1.8     # boss : fréquence bobbing
+const BOSS_SHOOT := 1.5     # boss : délai entre tirs
+const BOSS_INV := 0.7       # boss : invulnérabilité après un coup (s)
+const BOSS_TELE := 0.6      # boss : durée du télégraphe avant une attaque
+const BOSS_RECOVER := 1.2   # boss : fenêtre vulnérable après une attaque
+const BOSS_CHARGE_SPD := 460.0  # boss : vitesse de charge
 const SLOPE_SNAP_UP := 22.0
 const SLOPE_SNAP_DOWN := 16.0
 const STEP_UP := 24.0   # marche franchie sans saut ; ≈ demi-largeur joueur (jonction pente 45°↔bloc), < bloc plein 48px
@@ -275,6 +289,14 @@ func _build_entities() -> void:
 		elif app.grid[k] == SHOOTER:
 			enemies.append({"type": "shooter", "pos": Vector2(float(k.x * CELL) + 6.0, float(k.y * CELL) + (CELL - ESIZE)),
 				"dir": -1, "alive": true, "vy": 0.0, "shoot_t": SHOOT_INTERVAL})
+		elif app.grid[k] == BOSS:
+			var bx := float(k.x * CELL) + (CELL - BOSS_SIZE) * 0.5
+			var by := float(k.y * CELL) + 6.0
+			enemies.append({"type": "boss", "pos": Vector2(bx, by), "dir": -1, "alive": true,
+				"hp": BOSS_HP, "base_y": by, "phase": 0, "inv": 0.0,
+				"state": "intro", "st": 0.0, "atk": "", "fired": false, "tele": false, "vx": 0.0,
+				"queue": [], "enraged": false,
+				"min": float((k.x - 5) * CELL), "max": float((k.x + 5) * CELL)})
 		elif app.grid[k] == FIREBAR:
 			hazards.append({"type": "firebar", "center": Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL), "ang": 0.0})
 		elif app.grid[k] == MOVPLAT:
@@ -579,18 +601,39 @@ func _update_enemies(delta: float) -> void:
 	var pr := Rect2(ppos, PSIZE)
 	for en in enemies:
 		if not en.alive: continue
-		match en.get("type", "walker"):
+		var t: String = en.type
+		match t:
 			"flyer":   _enemy_flyer(en, delta)
 			"fish":    _enemy_fish(en, delta)
 			"chaser":  _enemy_chaser(en, delta)
 			"hopper":  _enemy_hopper(en, delta)
 			"bouncer": _enemy_bouncer(en, delta)
 			"shooter": _enemy_shooter(en, delta)
+			"boss":    _enemy_boss(en, delta)
 			_:         _enemy_ground(en, delta)   # walker + spiker
-		var er := Rect2(en.pos, Vector2(ESIZE, ESIZE))
+		var esz: float = BOSS_SIZE if t == "boss" else float(ESIZE)
+		var er := Rect2(en.pos, Vector2(esz, esz))
 		if not pr.intersects(er): continue
+		if t == "boss":
+			# stomp = un coup ; contact latéral = mort (sauf pdt l'invulnérabilité)
+			if pvel.y > 0 and (ppos.y + PSIZE.y) - en.pos.y < esz * 0.5:
+				pvel.y = STOMP_BOUNCE
+				if en.inv <= 0.0:
+					en.hp -= 1; en.inv = BOSS_INV
+					app._emit(en.pos + Vector2(esz, esz) * 0.5, 14, COLORS[BOSS].lightened(0.3), 220.0, 0.4, true, 4.0)
+					app._shake(5.0, 0.15); app._play("stomp")
+					if en.hp <= 0:
+						en.alive = false
+						app._emit(en.pos + Vector2(esz, esz) * 0.5, 40, COLORS[BOSS], 320.0, 0.9, true, 6.0)
+						app._shake(10.0, 0.4); app._play("win")
+					elif not en.enraged and en.hp <= BOSS_ENRAGE_HP:
+						en.state = "enrage"; en.st = 0.0; en.tele = false; en.queue = []
+					else:
+						en.state = "hurt"; en.st = 0.0; en.tele = false; en.queue = []
+			elif en.inv <= 0.0:
+				_die()
+			continue
 		# stompable : tout sauf piquant, poisson, rebondisseur
-		var t: String = en.type
 		var stompable: bool = t != "spiker" and t != "fish" and t != "bouncer"
 		if stompable and pvel.y > 0 and (ppos.y + PSIZE.y) - en.pos.y < 22:
 			en.alive = false; pvel.y = STOMP_BOUNCE
@@ -748,6 +791,217 @@ func _enemy_shooter(en: Dictionary, delta: float) -> void:
 		projectiles.append({"pos": origin, "vel": Vector2(en.dir * PROJ_SPEED, 0.0), "alive": true})
 		app._emit(origin, 4, COLORS[SHOOTER].lightened(0.4), 120.0, 0.2, false, 2.5)
 		app._play("spring")
+
+
+# ============================================================ BOSS (FSM exemple)
+# Machine à états d'un boss volant. Pensée pour être TUNÉE/ÉTENDUE :
+#  - phases = nombre de PV perdus (en.phase) → attaques + agressives quand il faiblit
+#  - le choix d'attaque est dans _boss_choose() (pondéré par phase)
+#  - chaque état = une fonction _boss_<nom>() ; pour en ajouter un :
+#       1) ajoute "mon_etat" dans le match de _enemy_boss
+#       2) écris func _boss_mon_etat(en, delta)
+#       3) entre-y via _boss_to(en, "mon_etat")
+#  - constantes de réglage : BOSS_* (vitesse, télégraphe, fenêtre vulnérable...)
+#
+# Cycle : intro → (choose) → telegraph → [shoot|charge] → recover(vulnérable) → choose
+#         hurt (quand stompé) → choose
+func _enemy_boss(en: Dictionary, delta: float) -> void:
+	if en.inv > 0.0: en.inv -= delta
+	en.st += delta
+	en.phase = BOSS_HP - int(en.hp)   # 0 (plein) → 2 (presque mort)
+	match en.get("state", "intro"):
+		"intro":     _boss_intro(en, delta)
+		"enrage":    _boss_enrage(en, delta)
+		"telegraph": _boss_telegraph(en, delta)
+		"shoot":     _boss_shoot(en, delta)
+		"charge":    _boss_charge(en, delta)
+		"slam":      _boss_slam(en, delta)
+		"recover":   _boss_recover(en, delta)
+		"hurt":      _boss_hurt(en, delta)
+
+
+func _boss_to(en: Dictionary, st: String) -> void:
+	en.state = st; en.st = 0.0; en.fired = false
+	en.tele = (st == "telegraph")
+
+
+func _boss_center(en: Dictionary) -> Vector2:
+	return en.pos + Vector2(BOSS_SIZE, BOSS_SIZE) * 0.5
+
+
+func _boss_hover(en: Dictionary, y_off: float) -> void:
+	# flottement sinusoïdal autour de base_y (+ décalage selon l'état)
+	en.pos.y = en.base_y + y_off + sin(en.st * BOSS_BOB_F) * BOSS_BOB_A
+
+
+func _boss_intro(en: Dictionary, _delta: float) -> void:
+	_boss_hover(en, 0.0)
+	if en.st > 1.0: _boss_choose(en)
+
+
+# construit une SÉQUENCE d'attaques (combo) selon le contexte + la phase, puis l'enchaîne.
+# La fenêtre vulnérable (recover) n'arrive qu'à la FIN du combo.
+func _boss_choose(en: Dictionary) -> void:
+	en.queue = _boss_build_queue(en)
+	_boss_next(en)
+
+
+# enchaîne l'attaque suivante du combo ; si fini → fenêtre vulnérable (recover)
+func _boss_next(en: Dictionary) -> void:
+	if en.queue.is_empty():
+		_boss_to(en, "recover")
+	else:
+		en.atk = en.queue.pop_front()
+		_boss_to(en, "telegraph")
+
+
+# choix CONTEXTUEL : lit la distance + si le joueur est en l'air pour décider.
+func _boss_pick_ctx(en: Dictionary) -> String:
+	var pc := ppos + PSIZE * 0.5
+	var bc := _boss_center(en)
+	var dist: float = absf(pc.x - bc.x)
+	var airborne: bool = not on_floor or pc.y < bc.y - CELL
+	if airborne:
+		return "shoot"                       # anti-air : tir visé (suit le joueur)
+	if dist > 6.0 * CELL:
+		return "charge" if randf() < 0.6 else "shoot"   # loin : fonce ou canarde
+	# proche au sol : slam si la phase le permet, sinon mix
+	if en.enraged or en.phase >= 1:
+		return "slam" if randf() < 0.6 else "charge"
+	return "shoot" if randf() < 0.5 else "charge"
+
+
+# longueur du combo : 1 normalement, 2-3 enragé → moveset qui s'enchaîne
+func _boss_build_queue(en: Dictionary) -> Array:
+	var n := 1
+	if en.enraged: n = 3 if randf() < 0.5 else 2
+	elif en.phase >= 2: n = 2 if randf() < 0.45 else 1
+	var q := []
+	var last := ""
+	for _i in n:
+		var a := _boss_pick_ctx(en)
+		if a == "slam" and last == "slam": a = "charge"   # évite double-slam
+		q.append(a); last = a
+	return q
+
+
+# PHASE 2 : rugissement (flash + shake), puis devient enragé (combos longs, télégraphe court)
+func _boss_enrage(en: Dictionary, _delta: float) -> void:
+	en.inv = 0.3   # invulnérable pendant le rugissement
+	_boss_hover(en, 0.0)
+	if int(en.st * 12.0) % 2 == 0:
+		app._emit(_boss_center(en), 3, COLORS[BOSS].lightened(0.4), 200.0, 0.25, true, 4.0)
+	if en.st > 1.0:
+		en.enraged = true
+		app._shake(8.0, 0.3); app._play("win")
+		_boss_choose(en)
+
+
+# télégraphe : clignote sur place, prévient le joueur, puis lance l'attaque
+func _boss_telegraph(en: Dictionary, _delta: float) -> void:
+	_boss_hover(en, 0.0)
+	var dur: float = maxf(0.2, (BOSS_TELE * 0.55) if en.enraged else (BOSS_TELE - float(en.phase) * 0.06))
+	if en.st >= dur:
+		_boss_to(en, en.atk)
+
+
+# attaque tir : salve en éventail vers le joueur (1 / 3 / 5 selon phase)
+func _boss_shoot(en: Dictionary, _delta: float) -> void:
+	_boss_hover(en, 0.0)
+	if not en.fired:
+		var n: int = [1, 3, 5][mini(int(en.phase), 2)]
+		_boss_volley(en, n, deg_to_rad(16.0))
+		en.fired = true
+	if en.st > 0.4:
+		_boss_next(en)
+
+
+func _boss_volley(en: Dictionary, n: int, spread: float) -> void:
+	var ctr := _boss_center(en)
+	var base := (ppos + PSIZE * 0.5) - ctr
+	if base.length() < 1.0: base = Vector2(en.dir, 0.2)
+	base = base.normalized()
+	var a0 := base.angle()
+	for i in n:
+		var a := a0 + (float(i) - float(n - 1) * 0.5) * spread
+		projectiles.append({"pos": ctr, "vel": Vector2(cos(a), sin(a)) * PROJ_SPEED, "alive": true})
+	app._emit(ctr, 6, COLORS[BOSS].lightened(0.4), 140.0, 0.25, false, 3.0)
+	app._play("spring")
+
+
+# attaque charge : fonce horizontalement vers le côté du joueur
+func _boss_charge(en: Dictionary, delta: float) -> void:
+	if not en.fired:
+		en.vx = BOSS_CHARGE_SPD * (1.0 if ppos.x > en.pos.x else -1.0)
+		en.fired = true
+		app._shake(2.0, 0.1)
+	en.pos.x += en.vx * delta
+	en.pos.y = en.base_y + sin(en.st * 8.0) * 4.0   # léger tremblement
+	if en.pos.x <= en.min or en.pos.x >= en.max or en.st > 1.3:
+		en.pos.x = clampf(en.pos.x, en.min, en.max)
+		app._shake(3.0, 0.12)
+		_boss_next(en)
+
+
+# attaque slam : se place au-dessus du joueur, monte, puis s'écrase → onde de choc au sol
+func _boss_slam(en: Dictionary, delta: float) -> void:
+	if not en.fired:
+		en.sub = "rise"; en.vy = 0.0; en.fired = true
+	if en.sub == "rise":
+		# se cale au-dessus du joueur + prend de la hauteur
+		en.pos.x = move_toward(en.pos.x, clampf(ppos.x - BOSS_SIZE * 0.5, en.min, en.max), 320.0 * delta)
+		en.pos.y = move_toward(en.pos.y, en.base_y - 90.0, 640.0 * delta)
+		if absf(en.pos.y - (en.base_y - 90.0)) < 4.0 or en.st > 0.8:
+			en.sub = "drop"; en.vy = 0.0
+	else:
+		en.vy = min(en.vy + GRAVITY * 1.3 * delta, 1600.0)
+		en.pos.y += en.vy * delta
+		var fy := _boss_floor(en)
+		if en.pos.y + BOSS_SIZE >= fy:
+			en.pos.y = fy - BOSS_SIZE
+			_boss_impact(en)
+			_boss_next(en)
+
+
+# trouve le Y du sol sous le boss (sinon bas du niveau)
+func _boss_floor(en: Dictionary) -> float:
+	var col := int((en.pos.x + BOSS_SIZE * 0.5) / CELL)
+	var r0 := int((en.pos.y + BOSS_SIZE) / CELL)
+	for row in range(maxi(r0, 0), app.rows + 1):
+		if _solid_tile(Vector2i(col, row)):
+			return float(row * CELL)
+	return float(app.rows * CELL)
+
+
+# impact du slam : shake + onde de choc (2 projectiles rasants gauche/droite)
+func _boss_impact(en: Dictionary) -> void:
+	app._shake(9.0, 0.35); app._play("break")
+	var cx: float = en.pos.x + BOSS_SIZE * 0.5
+	var fy: float = en.pos.y + BOSS_SIZE - PROJ_SIZE
+	app._emit(Vector2(cx, en.pos.y + BOSS_SIZE), 20, COLORS[BOSS].lightened(0.2), 260.0, 0.5, true, 4.0)
+	projectiles.append({"pos": Vector2(cx - BOSS_SIZE * 0.5, fy), "vel": Vector2(-PROJ_SPEED, 0.0), "alive": true})
+	projectiles.append({"pos": Vector2(cx + BOSS_SIZE * 0.5, fy), "vel": Vector2(PROJ_SPEED, 0.0), "alive": true})
+
+
+# récupération : descend + ralentit = fenêtre pour le stomper
+func _boss_recover(en: Dictionary, _delta: float) -> void:
+	_boss_hover(en, 40.0)   # plus bas → plus facile à atteindre
+	if en.st > BOSS_RECOVER:
+		_boss_choose(en)
+
+
+# touché : recule à l'opposé du joueur (quitte la zone sous ses pieds) avant de reprendre.
+# Empêche le boss de spammer un tir point-blank pendant qu'on est sur sa tête.
+func _boss_hurt(en: Dictionary, delta: float) -> void:
+	if not en.fired:
+		en.vx = -260.0 if ppos.x > en.pos.x else 260.0
+		en.fired = true
+	en.pos.x = clampf(en.pos.x + en.vx * delta, en.min, en.max)
+	_boss_hover(en, -18.0)
+	# attend de s'être suffisamment éloigné du joueur ET un délai mini avant de reprendre
+	var far_enough: bool = absf(_boss_center(en).x - (ppos.x + PSIZE.x * 0.5)) > BOSS_SIZE
+	if en.st > 0.7 and (far_enough or en.st > 1.3):
+		_boss_choose(en)
 
 
 func _update_projectiles(delta: float) -> void:
@@ -1443,7 +1697,7 @@ func _draw() -> void:
 		var tk: int = app.grid[k]
 		if app.mode == "play" and (tk == ENEMY or tk == MOVPLAT or tk == FLYER or tk == FISH or tk == SPIKER \
 				or tk == CHASER or tk == HOPPER or tk == BOUNCER or tk == SHOOTER or tk == FIREBAR \
-				or crumbled.has(k) or fb_trig.has(k)):
+				or tk == BOSS or crumbled.has(k) or fb_trig.has(k)):
 			continue
 		# autotile vertical (eau/lave) : surface = pas la même tuile juste au-dessus
 		var surf: bool = app.grid.get(Vector2i(k.x, k.y - 1), EMPTY) != tk
@@ -1475,17 +1729,38 @@ func _draw() -> void:
 			for wi in int(p.get("w", 1)):
 				draw_tile(self, app._w2s(p.pos + Vector2(wi * CELL, 0)), MOVPLAT, app.view_scale)
 		for en in enemies:
-			if en.alive:
-				var et := ENEMY
-				match en.get("type", "walker"):
-					"flyer": et = FLYER
-					"fish":  et = FISH
-					"spiker": et = SPIKER
-					"chaser": et = CHASER
-					"hopper": et = HOPPER
-					"bouncer": et = BOUNCER
-					"shooter": et = SHOOTER
-				draw_tile(self, app._w2s(en.pos - Vector2(6, 6)), et, app.view_scale)
+			if not en.alive: continue
+			if en.type == "boss":
+				var bctr: Vector2 = app._w2s(_boss_center(en))
+				# enragé (phase 2) : aura rouge pulsante
+				if en.get("enraged", false) or en.get("state", "") == "enrage":
+					var ar: float = (BOSS_SIZE * 0.72 + sin(app.anim_t * 9.0) * 6.0) * app.view_scale
+					draw_arc(bctr, ar, 0.0, TAU, 30, Color("e74c3c", 0.6), 4.0 * app.view_scale)
+				# télégraphe : anneau qui pulse avant une attaque (prévient le joueur)
+				if en.get("tele", false):
+					var pr: float = (BOSS_SIZE * 0.6 + sin(en.st * 18.0) * 8.0) * app.view_scale
+					draw_arc(bctr, pr, 0.0, TAU, 28, Color("ffde59", 0.8), 3.0 * app.view_scale)
+				# clignote pendant l'invulnérabilité
+				if en.inv > 0.0 and int(en.inv * 20.0) % 2 == 0:
+					pass
+				else:
+					draw_tile(self, app._w2s(en.pos), BOSS, (BOSS_SIZE / float(CELL)) * app.view_scale)
+				# barre de PV au-dessus
+				var bw: float = BOSS_SIZE * app.view_scale
+				var bp: Vector2 = app._w2s(en.pos) - Vector2(0, 12 * app.view_scale)
+				draw_rect(Rect2(bp, Vector2(bw, 6 * app.view_scale)), Color(0, 0, 0, 0.5))
+				draw_rect(Rect2(bp, Vector2(bw * float(en.hp) / float(BOSS_HP), 6 * app.view_scale)), Color("e74c3c"))
+				continue
+			var et := ENEMY
+			match en.get("type", "walker"):
+				"flyer": et = FLYER
+				"fish":  et = FISH
+				"spiker": et = SPIKER
+				"chaser": et = CHASER
+				"hopper": et = HOPPER
+				"bouncer": et = BOUNCER
+				"shooter": et = SHOOTER
+			draw_tile(self, app._w2s(en.pos - Vector2(6, 6)), et, app.view_scale)
 		for pj in projectiles:
 			if pj.alive:
 				draw_circle(app._w2s(pj.pos), PROJ_SIZE * 0.5 * app.view_scale, Color("ffce54"))
@@ -1912,6 +2187,22 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			ci.draw_circle(p + Vector2(cs * 0.5, cs * 0.55), cs * 0.26, col.lightened(0.12))
 			ci.draw_rect(Rect2(p + Vector2(cs * 0.5, cs * 0.46), Vector2(cs * 0.42, cs * 0.16)), col.darkened(0.2))
 			ci.draw_circle(p + Vector2(cs * 0.5, cs * 0.55), cs * 0.06, Color("ffce54", alpha))
+		BOSS:
+			# grosse bête : cornes + corps + gros yeux + dents
+			var bc := p + Vector2(cs * 0.5, cs * 0.55)
+			ci.draw_colored_polygon(PackedVector2Array([
+				p + Vector2(cs * 0.18, cs * 0.12), p + Vector2(cs * 0.32, cs * 0.38), p + Vector2(cs * 0.10, cs * 0.36)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([
+				p + Vector2(cs * 0.82, cs * 0.12), p + Vector2(cs * 0.68, cs * 0.38), p + Vector2(cs * 0.90, cs * 0.36)]), col)
+			ci.draw_circle(bc, cs * 0.36, col)
+			ci.draw_circle(p + Vector2(cs * 0.36, cs * 0.48), cs * 0.10, Color("ffde59", alpha))
+			ci.draw_circle(p + Vector2(cs * 0.64, cs * 0.48), cs * 0.10, Color("ffde59", alpha))
+			ci.draw_circle(p + Vector2(cs * 0.36, cs * 0.48), cs * 0.045, Color("2c3e50", alpha))
+			ci.draw_circle(p + Vector2(cs * 0.64, cs * 0.48), cs * 0.045, Color("2c3e50", alpha))
+			for di in 4:
+				var dx := cs * (0.34 + di * 0.11)
+				ci.draw_colored_polygon(PackedVector2Array([
+					p + Vector2(dx, cs * 0.72), p + Vector2(dx + cs * 0.05, cs * 0.72), p + Vector2(dx + cs * 0.025, cs * 0.82)]), Color(1, 1, 1, alpha))
 		FALLBLOCK:
 			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col)
 			ci.draw_rect(Rect2(p, Vector2(cs, max(2.0, cs * 0.10))), col.darkened(0.25))

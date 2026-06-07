@@ -159,7 +159,7 @@ var se_panel_outline := false
 const PAL_CATEGORIES := [
 	{"name": "Terrain",  "tiles": [1, 13, 14, 15, 16, 17, 18, 26, 27, 28, 29, 8, 21, 19, 30]},
 	{"name": "Danger",   "tiles": [7, 35, 36, 44, 45, 46]},
-	{"name": "Ennemis",  "tiles": [4, 37, 38, 39, 40, 41, 42, 43]},
+	{"name": "Ennemis",  "tiles": [4, 37, 38, 39, 40, 41, 42, 43, 47]},
 	{"name": "Items",    "tiles": [3, 11, 6]},
 	{"name": "Mecanique","tiles": [9, 20, 22, 23, 24, 25, 12]},
 	{"name": "Reperes",  "tiles": [2, 10, 5]},
