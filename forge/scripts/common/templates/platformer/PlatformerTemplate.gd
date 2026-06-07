@@ -210,6 +210,19 @@ func palette() -> Array: return PALETTE
 func tile_name(t: int) -> String: return NAMES.get(t, "")
 func tile_color(t: int) -> Color: return COLORS.get(t, Color.GRAY)
 
+# catégories de palette de l'éditeur (par genre). ForgeApp appelle tmpl.categories().
+const CATEGORIES := [
+	{"name": "Terrain",  "tiles": [1, 13, 14, 15, 16, 17, 18, 26, 27, 28, 29, 8, 21, 19, 30]},
+	{"name": "Danger",   "tiles": [7, 35, 36, 44, 45, 46]},
+	{"name": "Ennemis",  "tiles": [4, 37, 38, 39, 40, 41, 42, 43, 47]},
+	{"name": "Items",    "tiles": [3, 11, 6]},
+	{"name": "Mecanique","tiles": [9, 20, 22, 23, 24, 25, 12]},
+	{"name": "Reperes",  "tiles": [2, 10, 5]},
+	{"name": "Decor",    "tiles": [31, 32, 33, 34]},
+]
+func categories() -> Array: return CATEGORIES
+func movplat_tile() -> int: return MOVPLAT   # tuile configurable (cfg) ; -1 si aucune
+
 
 func seed_demo() -> void:
 	var grid: Dictionary = app.grid

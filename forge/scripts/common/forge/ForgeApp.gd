@@ -10,7 +10,7 @@ const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
 const PROJ_DIR := "user://forge_projects/"
 const TEMPLATES := {
-	"2D": [{"id": "platformer", "name": "Plateformer"}],
+	"2D": [{"id": "platformer", "name": "Plateformer"}, {"id": "topdown", "name": "Vue de dessus"}],
 	"3D": []
 }
 const CURSOR_DELAY := 0.25
@@ -22,6 +22,12 @@ const BG_THEMES := [
 	[Color("1b3826"), Color("224935")], [Color("382b1b"), Color("493a23")]
 ]
 const PLATFORMER_PLAY := preload("res://scenes/game/PlatformerPlay.tscn")
+# scènes de gameplay par genre (template). Ajoute ici un nouveau genre.
+const TEMPLATE_SCENES := {
+	"platformer": preload("res://scenes/game/PlatformerPlay.tscn"),
+	"topdown": preload("res://scenes/game/TopDownPlay.tscn"),
+}
+var tmpl_kind := ""
 
 # état éditeur
 var grid := {}
@@ -156,15 +162,9 @@ var se_panel_alpha := 0.9
 var se_panel_outline := false
 
 # tuiles groupées par catégorie (IDs depuis l'enum PlatformerTemplate)
-const PAL_CATEGORIES := [
-	{"name": "Terrain",  "tiles": [1, 13, 14, 15, 16, 17, 18, 26, 27, 28, 29, 8, 21, 19, 30]},
-	{"name": "Danger",   "tiles": [7, 35, 36, 44, 45, 46]},
-	{"name": "Ennemis",  "tiles": [4, 37, 38, 39, 40, 41, 42, 43, 47]},
-	{"name": "Items",    "tiles": [3, 11, 6]},
-	{"name": "Mecanique","tiles": [9, 20, 22, 23, 24, 25, 12]},
-	{"name": "Reperes",  "tiles": [2, 10, 5]},
-	{"name": "Decor",    "tiles": [31, 32, 33, 34]},
-]
+# palette de l'éditeur : fournie PAR LE TEMPLATE (genre) via tmpl.categories()
+func _cats() -> Array:
+	return tmpl.categories() if tmpl else []
 
 const UI_ACCENT := Color("f39c12")    # accent du chrome FORGE (≠ accent des écrans de jeu)
 const ACCENT_PALETTE := [
@@ -189,13 +189,29 @@ func _ready() -> void:
 	_compute_grid()
 	_build_audio()
 	DirAccess.make_dir_recursive_absolute(PROJ_DIR)
-	# instancie le template plateformer (rendu du monde + simulation + perso XSM)
-	tmpl = PLATFORMER_PLAY.instantiate()
-	add_child(tmpl)
-	tmpl.setup(self)
+	# instancie le template du genre courant (rendu du monde + simulation)
+	_load_template(cur_template)
 	queue_redraw()
 	if OS.get_cmdline_args().has("--selftest"):
 		call_deferred("_self_test")
+
+
+func _load_template(kind: String) -> void:
+	# (re)charge la scène de gameplay du genre demandé ; swap si différent du courant
+	if kind == tmpl_kind and tmpl != null:
+		return
+	if tmpl != null:
+		tmpl.queue_free()
+		tmpl = null
+	var scene = TEMPLATE_SCENES.get(kind, TEMPLATE_SCENES["platformer"])
+	tmpl_kind = kind if TEMPLATE_SCENES.has(kind) else "platformer"
+	tmpl = scene.instantiate()
+	add_child(tmpl)
+	tmpl.setup(self)
+	# adapte cat_pal au nombre de catégories du genre
+	cat_pal = []
+	for _i in tmpl.categories().size(): cat_pal.append(0)
+	cat = clampi(cat, 0, maxi(0, cat_pal.size() - 1))
 
 
 func _self_test() -> void:
@@ -437,13 +453,13 @@ func _edit_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_T], [JOY_BUTTON_RIGHT_STICK]): _start_play(true)
 	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _toggle_cursor_mode()
 	elif e is InputEventKey and e.pressed and not e.echo and e.keycode >= KEY_1 and e.keycode <= KEY_7:
-		cat = mini(e.keycode - KEY_1, PAL_CATEGORIES.size() - 1); queue_redraw()
+		cat = mini(e.keycode - KEY_1, _cats().size() - 1); queue_redraw()
 	if radial_open:
 		if _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]):
-			var n: int = PAL_CATEGORIES[cat]["tiles"].size()
+			var n: int = _cats()[cat]["tiles"].size()
 			radial_pick = (radial_pick - 1 + n) % n; queue_redraw()
 		elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]):
-			var n: int = PAL_CATEGORIES[cat]["tiles"].size()
+			var n: int = _cats()[cat]["tiles"].size()
 			radial_pick = (radial_pick + 1) % n; queue_redraw()
 
 
@@ -766,13 +782,13 @@ func _redraw_world() -> void:
 
 
 func _active_tile() -> int:
-	var c: Dictionary = PAL_CATEGORIES[cat]
+	var c: Dictionary = _cats()[cat]
 	var t: Array = c["tiles"]
 	return int(t[cat_pal[cat]])
 
 
 func _cycle(dir: int) -> void:
-	cat = (cat + dir + PAL_CATEGORIES.size()) % PAL_CATEGORIES.size()
+	cat = (cat + dir + _cats().size()) % _cats().size()
 	queue_redraw()
 
 
@@ -824,7 +840,7 @@ func _cycle_preset(cur: int, presets: Array) -> int:
 
 # ---------------- config par instance (objet sous le curseur)
 func _cfg_fields_for(t: int) -> Array:
-	if t == tmpl.MOVPLAT:
+	if tmpl.has_method("movplat_tile") and t == tmpl.movplat_tile():
 		return [
 			{"key": "width", "label": "Largeur", "opts": [1, 2, 3, 4, 5],           "def": 1},
 			{"key": "axis",  "label": "Axe",     "opts": ["H", "V"],                 "def": "H"},
@@ -1215,6 +1231,7 @@ func _scan_projects(dim: String) -> void:
 
 func _new_project(template_id: String) -> void:
 	cur_template = template_id
+	_load_template(cur_template)
 	var base := "Plateformer"
 	var i := 1
 	while FileAccess.file_exists(_proj_path("%s %d" % [base, i])): i += 1
@@ -1233,6 +1250,7 @@ func _new_project(template_id: String) -> void:
 func _open_project(p: Dictionary) -> void:
 	cur_dim = String(p.get("dim", "2D"))
 	cur_template = String(p.get("template", "platformer"))
+	_load_template(cur_template)
 	cur_project = String(p.get("name", ""))
 	var fa := FileAccess.open(String(p.get("path", "")), FileAccess.READ)
 	if fa == null:
@@ -1809,8 +1827,8 @@ func _draw_topbar(vp: Vector2) -> void:
 	if mode == "edit":
 		_text(f, Vector2(12, 32), "FORGE", Color("f39c12"), 20)
 		var x := 90.0
-		for i in PAL_CATEGORIES.size():
-			var c_data: Dictionary = PAL_CATEGORIES[i]
+		for i in _cats().size():
+			var c_data: Dictionary = _cats()[i]
 			var tile_id: int = int((c_data["tiles"] as Array)[cat_pal[i]])
 			var is_active := (i == cat)
 			var box := Rect2(Vector2(x, 4), Vector2(44, 44))
@@ -1901,7 +1919,7 @@ func _badge(x: float, y: float, glyph: String, label: String) -> float:
 
 func _draw_radial(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
-	var tiles: Array = PAL_CATEGORIES[cat]["tiles"]
+	var tiles: Array = _cats()[cat]["tiles"]
 	var n: int = tiles.size()
 	var slot := 52.0
 	var total: float = float(n) * slot
@@ -1910,7 +1928,7 @@ func _draw_radial(vp: Vector2) -> void:
 	var pw: float = total + 20.0; var ph := 100.0
 	draw_rect(Rect2(Vector2(ox - 10, oy - 10), Vector2(pw, ph)), Color(0, 0, 0, 0.82))
 	draw_rect(Rect2(Vector2(ox - 10, oy - 10), Vector2(pw, ph)), Color("f39c12"), false, 2.0)
-	_text(f, Vector2(ox - 8, oy + 6), str(PAL_CATEGORIES[cat]["name"]), Color("f39c12", 0.7), 11)
+	_text(f, Vector2(ox - 8, oy + 6), str(_cats()[cat]["name"]), Color("f39c12", 0.7), 11)
 	for i in n:
 		var tile_id: int = int(tiles[i])
 		var is_sel: bool = (i == radial_pick)
