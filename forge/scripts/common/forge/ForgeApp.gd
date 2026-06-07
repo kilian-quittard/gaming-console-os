@@ -849,6 +849,9 @@ func _cfg_fields_for(t: int) -> Array:
 			{"key": "span",  "label": "Portée",  "opts": [1, 2, 3, 4, 5, 6],         "def": 3},
 			{"key": "speed", "label": "Vitesse", "opts": ["lent", "normal", "rapide"], "def": "normal"},
 		]
+	# clés (11) et portes (12) : couleur (clé d'une couleur ouvre la porte de même couleur)
+	if t == 11 or t == 12:
+		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert"], "def": "or"}]
 	return []
 
 
@@ -1862,7 +1865,16 @@ func _draw_topbar(vp: Vector2) -> void:
 		var coin_col := Color("f1c40f")
 		if need_coins > 0 and tmpl.coins_got < need_coins: coin_col = Color("e67e22")
 		_text(f, Vector2(240, 34), coin_str, coin_col, 18)
-		if tmpl.has_key: _text(f, Vector2(560, 34), "🔑", Color("f1c40f"), 20)
+		# clés tenues (par couleur)
+		var kx := 540.0
+		for kcol in tmpl.keys:
+			if int(tmpl.keys[kcol]) > 0:
+				var kc: Color = tmpl.KEY_COLORS.get(kcol, Color("f1c40f"))
+				draw_circle(Vector2(kx, 30), 6.0, kc)
+				draw_rect(Rect2(Vector2(kx - 2, 30), Vector2(4, 12)), kc)
+				if int(tmpl.keys[kcol]) > 1:
+					_text(f, Vector2(kx + 6, 36), "x%d" % int(tmpl.keys[kcol]), kc, 12)
+				kx += 30.0
 		# PV joueur : cœurs (pleins/vides)
 		if tmpl.max_hearts > 0:
 			for i in tmpl.max_hearts:

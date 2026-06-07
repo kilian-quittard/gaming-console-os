@@ -154,6 +154,8 @@ var dead := false
 var won := false
 var death_t := 0.0
 var has_key := false
+var keys := {}            # clés ramassées par couleur : {"rouge":1,...}
+const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71")}
 var spawn_cell := Vector2i(4, 8)
 var respawn_cell := Vector2i(4, 8)
 var last_from_cursor := false
@@ -269,7 +271,7 @@ func start_play(from_cursor: bool) -> void:
 	respawn_cell = spawn_cell
 	coins_total = _count(COIN)
 	coins_got = 0
-	dead = false; won = false; death_t = 0.0; has_key = false
+	dead = false; won = false; death_t = 0.0; has_key = false; keys = {}
 	on_floor = false; was_floor = false; coyote_t = 0.0; jbuf = 0.0
 	pvel = Vector2.ZERO; input_x = 0
 	on_ladder = false; climbing = false; on_ice = false; prev_vx = 0.0
@@ -1599,8 +1601,11 @@ func _interactions(delta: float) -> void:
 				Input.start_joy_vibration(0, 0.25, 0.0, 0.04); app._play("coin")
 				coin_collected.emit()
 			KEY:
-				app.grid.erase(c); has_key = true
-				app._emit(_cell_center(c), 10, COLORS[KEY], 180.0, 0.4, false, 3.0)
+				var kcol := _cell_color(c)
+				keys[kcol] = int(keys.get(kcol, 0)) + 1
+				has_key = true
+				app.grid.erase(c); app.cell_cfg.erase(c)
+				app._emit(_cell_center(c), 10, KEY_COLORS.get(kcol, COLORS[KEY]), 180.0, 0.4, false, 3.0)
 				app._play("key")
 			SPIKE:
 				_die()
@@ -1638,13 +1643,28 @@ func _interactions(delta: float) -> void:
 						level_won.emit()
 					else:
 						app._set_toast(_goal_reason())
-	if has_key:
-		for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
-			if app.grid.get(c, EMPTY) == DOOR:
-				app.grid.erase(c); has_key = false
-				app._emit(_cell_center(c), 14, COLORS[DOOR], 200.0, 0.45, true, 4.0)
+	# portes : ouvre si on a une clé de la BONNE couleur (consommée)
+	for c in _cells(Rect2(ppos - Vector2(5, 5), PSIZE + Vector2(10, 10))):
+		if app.grid.get(c, EMPTY) == DOOR:
+			var dcol := _cell_color(c)
+			if int(keys.get(dcol, 0)) > 0:
+				keys[dcol] = int(keys[dcol]) - 1
+				has_key = _has_any_key()
+				app.grid.erase(c); app.cell_cfg.erase(c)
+				app._emit(_cell_center(c), 14, KEY_COLORS.get(dcol, COLORS[DOOR]), 200.0, 0.45, true, 4.0)
 				app._play("key"); app._shake(3.0, 0.1)
 				break
+
+
+func _cell_color(c: Vector2i) -> String:
+	var cfg = app.cell_cfg.get(c, {})
+	return str(cfg.get("color", "or"))
+
+
+func _has_any_key() -> bool:
+	for k in keys:
+		if int(keys[k]) > 0: return true
+	return false
 
 
 func _in_water() -> bool:
@@ -1781,6 +1801,10 @@ func _draw() -> void:
 		# autotile vertical (eau/lave) : surface = pas la même tuile juste au-dessus
 		var surf: bool = app.grid.get(Vector2i(k.x, k.y - 1), EMPTY) != tk
 		draw_tile(self, app._w2s(Vector2(k.x * CELL, k.y * CELL)), tk, app.view_scale, 1.0, true, surf)
+		# pastille de couleur sur clés/portes (énigmes : couleur = paire clé↔porte)
+		if tk == KEY or tk == DOOR:
+			var kc: Color = KEY_COLORS.get(str(app.cell_cfg.get(k, {}).get("color", "or")), Color.WHITE)
+			draw_circle(app._w2s(Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL)), CELL * 0.16 * app.view_scale, kc)
 
 	# rendu des loopings (edit : depuis grid, play : depuis active_loops)
 	if app.mode == "play":
