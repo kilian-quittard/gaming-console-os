@@ -4,7 +4,6 @@ extends Node2D
 # monde + personnage XSM) vit dans un template à part (scripts/common/templates/...).
 
 const CELL := 48
-const SFX_DB := -16.0   # atténuation globale des effets sonores
 const TOPBAR := 52
 const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
@@ -92,7 +91,8 @@ var radial_open := false
 var radial_pick := 0
 var menu_open := false
 var menu_idx := 0
-var menu_items := []
+var menu_items := []   # libellés affichés (dérivés de menu_def)
+var menu_def := []     # entrées data-driven : {label, act: Callable, modal: bool}
 var toast := ""
 var toast_t := 0.0
 
@@ -119,7 +119,6 @@ var particles := []
 var shake_t := 0.0
 var shake_mag := 0.0
 var squash := Vector2.ONE
-var music_on := false
 
 # shell
 var screen := "dim"
@@ -176,8 +175,7 @@ const DASH_KEYS  := ["editor",             "title",       "select",            "
 const TEXT_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !'?-."
 
 # audio
-var sfx := {}
-var music_player: AudioStreamPlayer
+var audio: ForgeAudio
 
 # template de jeu actif (le genre) + machine d'écrans (XSM)
 var tmpl: TemplateBase = null
@@ -445,80 +443,15 @@ func _compute_grid() -> void:
 
 
 # ============================================================= AUDIO
+# audio délégué au module ForgeAudio (SFX synthétisés + musique)
 func _build_audio() -> void:
-	sfx["jump"] = _mk_player(_tone([520.0, 760.0], 0.10, 0.35, "square"))
-	sfx["coin"] = _mk_player(_tone([900.0, 1300.0], 0.09, 0.30, "square"))
-	sfx["death"] = _mk_player(_tone([400.0, 120.0], 0.35, 0.40, "square"))
-	sfx["win"] = _mk_player(_tone([660.0, 880.0, 1180.0], 0.40, 0.35, "square"))
-	sfx["spring"] = _mk_player(_tone([300.0, 1000.0], 0.16, 0.40, "square"))
-	sfx["break"] = _mk_player(_tone([220.0, 90.0], 0.12, 0.35, "noise"))
-	sfx["stomp"] = _mk_player(_tone([700.0, 300.0], 0.10, 0.35, "square"))
-	sfx["key"] = _mk_player(_tone([800.0, 1200.0, 1000.0], 0.16, 0.30, "square"))
-	music_player = AudioStreamPlayer.new()
-	music_player.stream = _music_loop()
-	music_player.volume_db = -14.0
-	add_child(music_player)
+	audio = ForgeAudio.new()
+	add_child(audio)
 
 
-func _mk_player(stream: AudioStreamWAV) -> AudioStreamPlayer:
-	var p := AudioStreamPlayer.new()
-	p.stream = stream
-	p.volume_db = SFX_DB
-	add_child(p)
-	return p
+func _play(sname: String) -> void:
+	audio.play(sname)
 
-
-func _play(name: String) -> void:
-	if sfx.has(name): sfx[name].play()
-
-
-func _tone(freqs: Array, dur: float, vol := 0.4, kind := "square") -> AudioStreamWAV:
-	var rate := 22050
-	var n := int(rate * dur)
-	var data := PackedByteArray()
-	data.resize(n * 2)
-	var ph := 0.0
-	for i in n:
-		var prog := float(i) / n
-		var f: float = freqs[clampi(int(prog * freqs.size()), 0, freqs.size() - 1)]
-		ph += f / rate
-		var s: float
-		if kind == "square": s = 1.0 if fmod(ph, 1.0) < 0.5 else -1.0
-		elif kind == "noise": s = randf() * 2.0 - 1.0
-		else: s = sin(ph * TAU)
-		var env := 1.0 - prog
-		data.encode_s16(i * 2, int(clampf(s * env * vol, -1.0, 1.0) * 32767.0))
-	var w := AudioStreamWAV.new()
-	w.format = AudioStreamWAV.FORMAT_16_BITS
-	w.mix_rate = rate
-	w.stereo = false
-	w.data = data
-	return w
-
-
-func _music_loop() -> AudioStreamWAV:
-	var rate := 22050
-	var notes := [392.0, 523.0, 392.0, 659.0]
-	var nlen := 0.4
-	var n := int(rate * nlen * notes.size())
-	var data := PackedByteArray()
-	data.resize(n * 2)
-	var ph := 0.0
-	for i in n:
-		var t := float(i) / rate
-		var ni := int(t / nlen) % notes.size()
-		ph += notes[ni] / rate
-		var s := sin(ph * TAU) * 0.5 + sin(ph * TAU * 0.5) * 0.3
-		data.encode_s16(i * 2, int(clampf(s * 0.5, -1.0, 1.0) * 32767.0))
-	var w := AudioStreamWAV.new()
-	w.format = AudioStreamWAV.FORMAT_16_BITS
-	w.mix_rate = rate
-	w.stereo = false
-	w.data = data
-	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	w.loop_begin = 0
-	w.loop_end = n
-	return w
 
 
 # ============================================================= INPUT
@@ -1007,23 +940,76 @@ func _redo() -> void:
 
 
 # ---------------- menu éditeur
+# menu data-driven : chaque entrée porte son libellé ET son action.
+# Insérer/retirer une entrée ne décale plus rien (fini le match indexé fragile).
+func _menu_def_build() -> Array:
+	var hp := int(level_props.get("player_hp", tmpl.default_hp()))
+	var tl := int(level_props.get("time_limit", 0))
+	var wc := int(level_props.get("win_coins", 0))
+	return [
+		{"label": "Sauvegarder", "act": _save_current},
+		{"label": "Copier zone", "act": _start_selection},
+		{"label": "Coller ici", "act": _paste_clip},
+		{"label": "Configurer objet…", "act": _open_config, "modal": true},
+		{"label": "Vider niveau", "act": func() -> void:
+			_push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")},
+		{"label": "Customiser le fond…", "act": _open_bgedit, "modal": true},
+		{"label": "Autorun: %s" % _onoff(level_props.get("autorun", false)),
+			"act": func() -> void: _toggle_prop("autorun", "Autorun")},
+		{"label": "Physique Sonic: %s" % _onoff(level_props.get("sonic", false)),
+			"act": func() -> void: _toggle_prop("sonic", "Physique Sonic")},
+		{"label": "Eau · Nage: %s" % _onoff(level_props.get("water_swim", false)),
+			"act": func() -> void: _toggle_prop("water_swim", "Eau · Nage")},
+		{"label": "Eau · Noyade: %s" % _onoff(level_props.get("water_drown", false)),
+			"act": func() -> void: _toggle_prop("water_drown", "Eau · Noyade")},
+		{"label": "Victoire · Pièces: %s" % (str(wc) if wc > 0 else "OFF"),
+			"act": func() -> void: _cycle_prop("win_coins", [0, 5, 10, 20], "Victoire · Pièces")},
+		{"label": "Victoire · Tuer tous: %s" % _onoff(level_props.get("win_killall", false)),
+			"act": func() -> void: _toggle_prop("win_killall", "Victoire · Tuer tous")},
+		{"label": "Victoire · Temps: %s" % ((str(tl) + "s") if tl > 0 else "OFF"),
+			"act": func() -> void: _cycle_prop("time_limit", [0, 30, 60, 90], "Victoire · Temps")},
+		{"label": "PV joueur (cœurs): %s" % (str(hp) if hp > 0 else "OFF"), "act": func() -> void:
+			level_props["player_hp"] = _cycle_preset(hp, [0, 3, 5])
+			var v: int = int(level_props["player_hp"])
+			_set_toast("PV joueur : %s" % (str(v) + " cœurs" if v > 0 else "désactivé"))},
+		{"label": "Caméra salles (top-down): %s" % ("ON" if String(level_props.get("cam", "rooms")) == "rooms" else "OFF"),
+			"act": func() -> void:
+				var was := String(level_props.get("cam", "rooms")) == "rooms"
+				level_props["cam"] = "free" if was else "rooms"
+				cam_init = false
+				_set_toast("Caméra : %s" % ("libre" if was else "salles (verrou)"))},
+		{"label": "Éditer les salles… (%d)" % rooms.size(), "modal": true, "act": func() -> void:
+			room_edit = true; room_c0 = Vector2i(-1, -1)},
+		{"label": "Musique: %s" % _onoff(audio.music_on), "act": _toggle_music},
+		{"label": "FPS (debug): %s" % _onoff(show_fps), "act": func() -> void:
+			show_fps = not show_fps
+			_set_toast("FPS %s" % _onoff(show_fps))},
+		{"label": "Générer avec IA...", "act": _open_ai_panel, "modal": true},
+		{"label": "Projets (quitter)", "act": func() -> void:
+			_save_current(); states.change_state("ListState")},
+		{"label": "Fermer"},
+	]
+
+
+func _onoff(b: bool) -> String:
+	return "ON" if b else "OFF"
+
+
+func _toggle_prop(key: String, label: String) -> void:
+	level_props[key] = not level_props.get(key, false)
+	_set_toast("%s %s" % [label, _onoff(level_props[key])])
+
+
+func _cycle_prop(key: String, presets: Array, label: String) -> void:
+	level_props[key] = _cycle_preset(int(level_props.get(key, 0)), presets)
+	var v: int = int(level_props[key])
+	_set_toast("%s : %s" % [label, (str(v) if v > 0 else "désactivé")])
+
+
 func _open_menu() -> void:
 	menu_open = true; menu_idx = 0
-	menu_items = ["Sauvegarder", "Copier zone", "Coller ici", "Configurer objet…", "Vider niveau",
-		"Customiser le fond…", "Autorun: %s" % ("ON" if level_props.get("autorun", false) else "OFF"),
-		"Physique Sonic: %s" % ("ON" if level_props.get("sonic", false) else "OFF"),
-		"Eau · Nage: %s" % ("ON" if level_props.get("water_swim", false) else "OFF"),
-		"Eau · Noyade: %s" % ("ON" if level_props.get("water_drown", false) else "OFF"),
-		"Victoire · Pièces: %s" % (str(int(level_props.get("win_coins", 0))) if int(level_props.get("win_coins", 0)) > 0 else "OFF"),
-		"Victoire · Tuer tous: %s" % ("ON" if level_props.get("win_killall", false) else "OFF"),
-		"Victoire · Temps: %s" % ((str(int(level_props.get("time_limit", 0))) + "s") if int(level_props.get("time_limit", 0)) > 0 else "OFF"),
-		"PV joueur (cœurs): %s" % (str(int(level_props.get("player_hp", tmpl.default_hp()))) if int(level_props.get("player_hp", tmpl.default_hp())) > 0 else "OFF"),
-		"Caméra salles (top-down): %s" % ("ON" if String(level_props.get("cam", "rooms")) == "rooms" else "OFF"),
-		"Éditer les salles… (%d)" % rooms.size(),
-		"Musique: %s" % ("ON" if music_on else "OFF"),
-		"FPS (debug): %s" % ("ON" if show_fps else "OFF"),
-		"Générer avec IA...",
-		"Projets (quitter)", "Fermer"]
+	menu_def = _menu_def_build()
+	menu_items = menu_def.map(func(it): return str(it["label"]))
 	queue_redraw()
 
 
@@ -1254,64 +1240,17 @@ func _menu_input(e: InputEvent) -> void:
 
 
 func _menu_select() -> void:
-	match menu_idx:
-		0: _save_current()
-		1: _start_selection()
-		2: _paste_clip()
-		3: menu_open = false; queue_redraw(); _open_config(); return
-		4: _push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")
-		5: menu_open = false; queue_redraw(); _open_bgedit(); return
-		6:
-			level_props["autorun"] = not level_props.get("autorun", false)
-			_set_toast("Autorun %s" % ("ON" if level_props["autorun"] else "OFF"))
-		7:
-			level_props["sonic"] = not level_props.get("sonic", false)
-			_set_toast("Physique Sonic %s" % ("ON" if level_props["sonic"] else "OFF"))
-		8:
-			level_props["water_swim"] = not level_props.get("water_swim", false)
-			_set_toast("Eau · Nage %s" % ("ON" if level_props["water_swim"] else "OFF"))
-		9:
-			level_props["water_drown"] = not level_props.get("water_drown", false)
-			_set_toast("Eau · Noyade %s" % ("ON" if level_props["water_drown"] else "OFF"))
-		10:
-			level_props["win_coins"] = _cycle_preset(int(level_props.get("win_coins", 0)), [0, 5, 10, 20])
-			var wc: int = int(level_props["win_coins"])
-			_set_toast("Victoire · Pièces : %s" % (str(wc) if wc > 0 else "désactivé"))
-		11:
-			level_props["win_killall"] = not level_props.get("win_killall", false)
-			_set_toast("Victoire · Tuer tous %s" % ("ON" if level_props["win_killall"] else "OFF"))
-		12:
-			level_props["time_limit"] = _cycle_preset(int(level_props.get("time_limit", 0)), [0, 30, 60, 90])
-			var tl: int = int(level_props["time_limit"])
-			_set_toast("Victoire · Temps : %s" % ((str(tl) + "s") if tl > 0 else "désactivé"))
-		13:
-			level_props["player_hp"] = _cycle_preset(int(level_props.get("player_hp", tmpl.default_hp())), [0, 3, 5])
-			var hp: int = int(level_props["player_hp"])
-			_set_toast("PV joueur : %s" % (str(hp) + " cœurs" if hp > 0 else "désactivé"))
-		14:
-			var rooms := String(level_props.get("cam", "rooms")) == "rooms"
-			level_props["cam"] = "free" if rooms else "rooms"
-			cam_init = false
-			_set_toast("Caméra : %s" % ("libre" if rooms else "salles (verrou)"))
-		15:
-			room_edit = true; room_c0 = Vector2i(-1, -1)
-			menu_open = false; queue_redraw(); return
-		16: _toggle_music()
-		17:
-			show_fps = not show_fps
-			_set_toast("FPS %s" % ("ON" if show_fps else "OFF"))
-		18: _open_ai_panel()
-		19: _save_current(); states.change_state("ListState")
-		20: pass
+	var it: Dictionary = menu_def[menu_idx] if menu_idx < menu_def.size() else {}
 	menu_open = false
+	if it.has("act"):
+		(it["act"] as Callable).call()
+	if it.get("modal", false):
+		queue_redraw(); return   # l'action a ouvert un autre panneau
 	queue_redraw(); _redraw_world()   # vidage/thème/sonic peuvent changer le monde
 
 
 func _toggle_music() -> void:
-	music_on = not music_on
-	if music_on: music_player.play()
-	else: music_player.stop()
-	_set_toast("Musique %s" % ("ON" if music_on else "OFF"))
+	_set_toast("Musique %s" % ("ON" if audio.toggle_music() else "OFF"))
 
 
 func _set_toast(s: String) -> void:
