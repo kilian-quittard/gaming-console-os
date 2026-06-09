@@ -180,7 +180,7 @@ var sfx := {}
 var music_player: AudioStreamPlayer
 
 # template de jeu actif (le genre) + machine d'écrans (XSM)
-var tmpl: PlatformerTemplate = null
+var tmpl: TemplateBase = null
 @onready var states: State = $States
 
 # style graphique rétro (skin appliqué au monde via shader ; UI non affectée)
@@ -419,6 +419,7 @@ func _self_test() -> void:
 		if f % 17 == 0:
 			print("f%3d x=%4.0f y=%4.0f floor=%s" % [f, tmpl.ppos.x, tmpl.ppos.y, str(tmpl.on_floor)])
 	print("=== DESCEND (vers la gauche, y doit AUGMENTER) ===")
+	var pt: PlatformerTemplate = tmpl   # accès aux champs sonic (debug)
 	tmpl.test_dir = -1
 	for f in range(170):
 		tmpl._physics_process(dt)
@@ -433,7 +434,7 @@ func _self_test() -> void:
 	for f in range(220):
 		tmpl._physics_process(dt)
 		if f % 20 == 0:
-			print("f%3d x=%4.0f y=%4.0f sgr=%s gsp=%5.0f ang=%+.2f" % [f, tmpl.ppos.x, tmpl.ppos.y, str(tmpl.sonic_grounded), tmpl.gsp, tmpl.gangle])
+			print("f%3d x=%4.0f y=%4.0f sgr=%s gsp=%5.0f ang=%+.2f" % [f, tmpl.ppos.x, tmpl.ppos.y, str(pt.sonic_grounded), pt.gsp, pt.gangle])
 	level_props = {}
 	get_tree().quit()
 
@@ -1032,20 +1033,9 @@ func _cycle_preset(cur: int, presets: Array) -> int:
 
 
 # ---------------- config par instance (objet sous le curseur)
+# les champs sont définis par le template (connaissance des tuiles = au genre)
 func _cfg_fields_for(t: int) -> Array:
-	if tmpl.has_method("movplat_tile") and t == tmpl.movplat_tile():
-		return [
-			{"key": "width", "label": "Largeur", "opts": [1, 2, 3, 4, 5],           "def": 1},
-			{"key": "axis",  "label": "Axe",     "opts": ["H", "V"],                 "def": "H"},
-			{"key": "dir",   "label": "Sens",    "opts": ["+", "-"],                 "def": "+"},
-			{"key": "span",  "label": "Portée",  "opts": [1, 2, 3, 4, 5, 6],         "def": 3},
-			{"key": "speed", "label": "Vitesse", "opts": ["lent", "normal", "rapide"], "def": "normal"},
-		]
-	# couleur d'instance : clé/porte (11/12) + interrupteur/grille/dalle (24/25/49)
-	# → relie par groupe de couleur (interrupteur rose ↔ grille rose, etc.)
-	if t == 11 or t == 12 or t == 24 or t == 25 or t == 49:
-		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert", "rose"], "def": "or"}]
-	return []
+	return tmpl.config_fields(t)
 
 
 func _open_config() -> void:
@@ -1926,7 +1916,7 @@ func _compute_view() -> void:
 	var vp := get_viewport_rect().size
 	var area := Rect2(0, TOPBAR, vp.x, vp.y - TOPBAR - BOTTOM)
 	var lvl := Vector2(cols * CELL, rows * CELL)
-	if mode == "play" and cur_template == "topdown" and String(level_props.get("cam", "rooms")) == "rooms":
+	if mode == "play" and tmpl.wants_room_camera():
 		_compute_room_view(area)
 		if shake_t > 0.0:
 			view_origin += Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake_mag
@@ -1963,7 +1953,7 @@ func _draw() -> void:
 	if screen == "gamedash":   _draw_gamedash(vp); return
 	if screen == "screenedit": _draw_screenedit(vp); return
 	# jeu en mode salles : masque tout ce qui dépasse la salle courante (letterbox)
-	if mode == "play" and cur_template == "topdown" and String(level_props.get("cam", "rooms")) == "rooms" and cur_room >= 0 and cur_room < rooms.size():
+	if mode == "play" and tmpl.wants_room_camera() and cur_room >= 0 and cur_room < rooms.size():
 		_draw_room_mask(vp)
 	# édition/jeu : le monde est rendu par le template (derrière), ici le chrome par-dessus
 	if mode == "edit" and not radial_open and not bg_edit and get("hide_editor_chrome") != true:
@@ -2202,13 +2192,11 @@ func _draw_topbar(vp: Vector2) -> void:
 				draw_circle(Vector2(470 + i * 18, 26), 6.0, bc)
 			if frac < 0.34:
 				_text(f, Vector2(470, 48), "⚠ AIR", Color("e74c3c"), 12)
-		elif level_props.get("sonic", false):
-			var dbg := "SONIC  sol=%s  ang=%+.0f°  gsp=%4.0f  vy=%4.0f" % [
-				("OUI" if tmpl.sonic_grounded else "non"),
-				rad_to_deg(tmpl.gangle), tmpl.gsp, tmpl.pvel.y]
-			_text(f, Vector2(470, 34), dbg, Color("00e5ff"), 16)
-			if tmpl.land_debug != "":
-				_text(f, Vector2(470, 54), tmpl.land_debug, Color("ff9800"), 14)
+		else:
+			# texte debug fourni par le genre (ex: sonic) — vide = rien
+			var dbg := tmpl.debug_text()
+			if dbg != "" and show_fps:
+				_text(f, Vector2(470, 34), dbg, Color("00e5ff"), 14)
 
 
 func _draw_hints(vp: Vector2) -> void:
@@ -2231,19 +2219,10 @@ func _draw_hints(vp: Vector2) -> void:
 			x = _badge(x, y, "R2", "Vue")
 			x = _badge(x, y, "ST", "Tester")
 			x = _badge(x, y, "Sel", "Menu")
-	elif cur_template == "topdown":
-		x = _badge(x, y, "←→↑↓", "Bouger")
-		x = _badge(x, y, "A", "Épée")
-		x = _badge(x, y, "X", "Tir")
-		x = _badge(x, y, "R1", "Dash")
-		x = _badge(x, y, "Y", "Rejouer")
-		x = _badge(x, y, "ST", "Éditeur")
 	else:
-		x = _badge(x, y, "←→", "Bouger")
-		x = _badge(x, y, "A", "Sauter")
-		x = _badge(x, y, "R1", "Dash")
-		x = _badge(x, y, "Y", "Rejouer")
-		x = _badge(x, y, "ST", "Éditeur")
+		# badges de test fournis par le genre (le shell ne connaît pas les genres)
+		for b in tmpl.play_badges():
+			x = _badge(x, y, str(b[0]), str(b[1]))
 
 
 func _badge(x: float, y: float, glyph: String, label: String) -> float:

@@ -1,9 +1,9 @@
-extends PlatformerTemplate
+extends TemplateBase
 class_name TopDownTemplate
-# Template VUE DE DESSUS. Réutilise tout le générique du platformer (fond, formes,
-# lissage, projectiles, FSM de boss, comportements volant/chasseur, _interactions,
-# rendu) et n'override que le GAMEPLAY : déplacement 8 directions (sans gravité),
-# combat épée + tir, et le dessin (joueur orienté + overlays).
+# Genre VUE DE DESSUS. Hérite des services partagés de TemplateBase (tuiles,
+# PV/dash, clés/portes/dalles, boss FSM, volant/chasseur, projectiles, rendu)
+# et implémente le GAMEPLAY : déplacement 8 directions (sans gravité),
+# combat épée + tir, salles façon Zelda, et le dessin (joueur orienté).
 
 const TD_SPEED := 240.0     # vitesse de déplacement (px/s)
 const TD_ATK_DUR := 0.18    # durée visuelle du coup d'épée
@@ -28,9 +28,14 @@ const TD_CATS := [
 	{"name": "Décor",   "tiles": [PALM, TREE, BUSH, FLOWER]},
 ]
 func categories() -> Array: return TD_CATS
-func movplat_tile() -> int: return -1   # pas de plateforme mobile en top-down
 func default_hp() -> int: return 3      # PV par défaut en top-down (cœurs activés)
 func _wants_parallax() -> bool: return false   # top-down : fond plat (pas de collines)
+# caméra par salles (style Celeste/Zelda) — désactivable par niveau (cam = "free")
+func wants_room_camera() -> bool: return String(app.level_props.get("cam", "rooms")) == "rooms"
+
+
+func play_badges() -> Array:
+	return [["←→↑↓", "Bouger"], ["A", "Épée"], ["X", "Tir"], ["R1", "Dash"], ["Y", "Rejouer"], ["ST", "Éditeur"]]
 
 
 # sol dallé automatique sous TOUT le niveau (les objets se posent dessus sans l'écraser)
