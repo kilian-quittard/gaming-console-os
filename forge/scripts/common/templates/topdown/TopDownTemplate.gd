@@ -349,4 +349,42 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 		ci.draw_line(p + Vector2(cs * 0.5, 0), p + Vector2(cs * 0.5, cs), fc.darkened(0.12), maxf(1.0, scale))
 		ci.draw_line(p + Vector2(0, cs * 0.5), p + Vector2(cs, cs * 0.5), fc.darkened(0.12), maxf(1.0, scale))
 		return
+	# décors vus DE DESSUS (override le rendu de profil du platformer)
+	var ctr := p + Vector2(cs, cs) * 0.5
+	if t == TREE:
+		# grand arbre imposant (déborde la case, houppier qui surplombe) — vue 3/4
+		var bx := p + Vector2(cs * 0.5, cs * 0.95)
+		ci.draw_circle(bx, cs * 0.4, Color(0, 0, 0, 0.18))                                    # ombre large
+		ci.draw_rect(Rect2(p + Vector2(cs * 0.38, cs * 0.45), Vector2(cs * 0.24, cs * 0.5)), Color("6b4a2b"))  # gros tronc
+		ci.draw_rect(Rect2(p + Vector2(cs * 0.38, cs * 0.45), Vector2(cs * 0.08, cs * 0.5)), Color("5b3a1e"))  # ombre tronc
+		var cnp := p + Vector2(cs * 0.5, cs * 0.05)   # houppier remonte au-dessus de la case
+		var tdk: Color = COLORS[TREE].darkened(0.22)
+		# houppier massif : grands lobes débordants
+		for o in [Vector2(-0.42, 0.18), Vector2(0.42, 0.18), Vector2(-0.26, -0.22), Vector2(0.26, -0.22), Vector2(0, 0.34), Vector2(0, -0.34)]:
+			ci.draw_circle(cnp + o * cs, cs * 0.34, tdk)
+		ci.draw_circle(cnp, cs * 0.46, COLORS[TREE])
+		ci.draw_circle(cnp + Vector2(-cs * 0.12, -cs * 0.12), cs * 0.2, COLORS[TREE].lightened(0.2))
+		return
+	if t == PALM:
+		ci.draw_circle(p + Vector2(cs * 0.5, cs * 0.9), cs * 0.24, Color(0, 0, 0, 0.16))   # ombre
+		# tronc courbé
+		ci.draw_line(p + Vector2(cs * 0.5, cs * 0.92), p + Vector2(cs * 0.46, cs * 0.4), Color("9c7a3c"), maxf(3.0, 5.0 * scale))
+		var top := p + Vector2(cs * 0.46, cs * 0.36)
+		# frondes qui retombent depuis le sommet
+		for ang in [-2.4, -1.7, -1.05, -0.5, 0.1]:
+			ci.draw_line(top, top + Vector2(cos(ang), sin(ang)) * cs * 0.4, COLORS[PALM].darkened(0.08), maxf(2.0, 3.0 * scale))
+		ci.draw_circle(top, cs * 0.07, COLORS[PALM])
+		return
+	if t == BUSH:
+		ci.draw_circle(ctr + Vector2(cs * 0.08, cs * 0.1), cs * 0.4, Color(0, 0, 0, 0.14))
+		for o in [Vector2(-0.16, 0.02), Vector2(0.16, 0.02), Vector2(0, -0.12)]:
+			ci.draw_circle(ctr + o * cs, cs * 0.24, COLORS[BUSH].darkened(0.12))
+		ci.draw_circle(ctr, cs * 0.2, COLORS[BUSH])
+		return
+	if t == FLOWER:
+		for k in 6:
+			var a := k * PI / 3.0
+			ci.draw_circle(ctr + Vector2(cos(a), sin(a)) * cs * 0.22, cs * 0.13, COLORS[FLOWER])
+		ci.draw_circle(ctr, cs * 0.13, Color("f1c40f"))
+		return
 	super(ci, p, t, scale, alpha, world, surface)

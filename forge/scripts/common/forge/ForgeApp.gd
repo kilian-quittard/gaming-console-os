@@ -192,6 +192,10 @@ const GFX_STYLES := [
 	{"name": "GBA",  "mode": 3, "sw": Color("3cbc8c"), "px": 2.0},
 ]
 var pix_rect: ColorRect = null   # post-process plein écran : pixelise le monde (UI reste nette)
+var rooms := []                  # salles (style Celeste) : Array[Rect2i] en cases
+var cur_room := -1               # salle courante (le joueur dedans)
+var room_edit := false           # mode édition des salles
+var room_c0 := Vector2i(-1, -1)  # 1er coin en cours de tracé
 var gfx_trans := 0.0             # transition de switch de thème (wipe)
 var gfx_pending := -1            # mode à appliquer à mi-transition
 const GFX_TRANS_DUR := 0.5
@@ -291,6 +295,49 @@ func _apply_gfx() -> void:
 	if pix_rect:
 		pix_rect.material.set_shader_parameter("px", px)
 		pix_rect.visible = px > 1.0
+
+
+# cache les marges autour de la salle courante (on ne voit QUE la salle)
+func _draw_room_mask(vp: Vector2) -> void:
+	var r: Rect2i = rooms[cur_room]
+	var p0 := _w2s(Vector2(r.position) * CELL)
+	var sz := Vector2(r.size) * CELL * view_scale
+	var area_top := float(TOPBAR)
+	var area_bot := vp.y - BOTTOM
+	var col := Color("0a0d12")
+	# bandes haut / bas / gauche / droite (limitées à la zone de jeu)
+	if p0.y > area_top:
+		draw_rect(Rect2(Vector2(0, area_top), Vector2(vp.x, p0.y - area_top)), col)
+	if p0.y + sz.y < area_bot:
+		draw_rect(Rect2(Vector2(0, p0.y + sz.y), Vector2(vp.x, area_bot - (p0.y + sz.y))), col)
+	if p0.x > 0:
+		draw_rect(Rect2(Vector2(0, p0.y), Vector2(p0.x, sz.y)), col)
+	if p0.x + sz.x < vp.x:
+		draw_rect(Rect2(Vector2(p0.x + sz.x, p0.y), Vector2(vp.x - (p0.x + sz.x), sz.y)), col)
+
+
+func _draw_roomedit(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	# bandeau bas
+	draw_rect(Rect2(Vector2(0, vp.y - 30), Vector2(vp.x, 30)), Color(13.0/255, 17.0/255, 23.0/255, 0.9))
+	_text(f, Vector2(12, vp.y - 10), "ÉDITER SALLES — A: poser coin/valider · X: supprimer · B: fini   (salles: %d)" % rooms.size(), Color("ecf0f1"), 13)
+	# salles existantes
+	for i in rooms.size():
+		var r: Rect2i = rooms[i]
+		var sr := Rect2(_w2s(Vector2(r.position) * CELL), Vector2(r.size) * CELL * view_scale)
+		draw_rect(sr, Color(0.2, 0.8, 1.0, 0.10))
+		draw_rect(sr, Color("3cb4e8"), false, 2.0)
+		_text(f, sr.position + Vector2(4, 16), "S%d" % (i + 1), Color("3cb4e8"), 13)
+	# rectangle en cours (1er coin posé)
+	if room_c0.x >= 0:
+		var x0 := mini(room_c0.x, cursor.x); var y0 := mini(room_c0.y, cursor.y)
+		var x1 := maxi(room_c0.x, cursor.x); var y1 := maxi(room_c0.y, cursor.y)
+		var pr := Rect2(_w2s(Vector2(x0 * CELL, y0 * CELL)), Vector2((x1 - x0 + 1) * CELL, (y1 - y0 + 1) * CELL) * view_scale)
+		draw_rect(pr, Color(1.0, 0.6, 0.1, 0.18))
+		draw_rect(pr, Color("f39c12"), false, 2.0)
+	# curseur
+	var cp := _w2s(Vector2(cursor.x * CELL, cursor.y * CELL))
+	draw_rect(Rect2(cp, Vector2(CELL, CELL) * view_scale), Color("f39c12"), false, 2.0)
 
 
 func _draw_gfx_trans(vp: Vector2) -> void:
@@ -499,6 +546,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
 	if bg_edit:    _bgedit_input(e); return
+	if room_edit:  _roomedit_input(e); return
 	if menu_open:
 		_menu_input(e); return
 	if mode == "edit":
@@ -969,6 +1017,8 @@ func _open_menu() -> void:
 		"Victoire · Tuer tous: %s" % ("ON" if level_props.get("win_killall", false) else "OFF"),
 		"Victoire · Temps: %s" % ((str(int(level_props.get("time_limit", 0))) + "s") if int(level_props.get("time_limit", 0)) > 0 else "OFF"),
 		"PV joueur (cœurs): %s" % (str(int(level_props.get("player_hp", tmpl.default_hp()))) if int(level_props.get("player_hp", tmpl.default_hp())) > 0 else "OFF"),
+		"Caméra salles (top-down): %s" % ("ON" if String(level_props.get("cam", "rooms")) == "rooms" else "OFF"),
+		"Éditer les salles… (%d)" % rooms.size(),
 		"Musique: %s" % ("ON" if music_on else "OFF"),
 		"FPS (debug): %s" % ("ON" if show_fps else "OFF"),
 		"Générer avec IA...",
@@ -1041,6 +1091,43 @@ const BG_NAMES := ["Ciel", "Espace", "Neige", "Désert"]
 
 func _open_bgedit() -> void:
 	bg_edit = true; queue_redraw(); _redraw_world()
+
+
+# édition des salles (style Celeste) : A = poser les 2 coins d'un rectangle, X = supprimer
+func _roomedit_input(e: InputEvent) -> void:
+	if e is InputEventMouseMotion:
+		aim = (e as InputEventMouseMotion).position; _sync_cursor_from_aim(); queue_redraw(); return
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_BACK, JOY_BUTTON_B]):
+		room_edit = false; room_c0 = Vector2i(-1, -1); _save_current(); queue_redraw(); _redraw_world(); return
+	if e is InputEventMouseButton and e.pressed:
+		aim = e.position; _sync_cursor_from_aim()
+	# A / clic gauche : pose un coin puis le coin opposé → crée la salle
+	if _press(e, [KEY_ENTER, KEY_SPACE], [JOY_BUTTON_A]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed):
+		if room_c0.x < 0:
+			room_c0 = cursor
+		else:
+			var x0 := mini(room_c0.x, cursor.x); var y0 := mini(room_c0.y, cursor.y)
+			var x1 := maxi(room_c0.x, cursor.x); var y1 := maxi(room_c0.y, cursor.y)
+			rooms.append(Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+			room_c0 = Vector2i(-1, -1); _play("coin")
+		queue_redraw(); return
+	# X / clic droit : supprime la salle sous le curseur
+	if _press(e, [KEY_X, KEY_DELETE], [JOY_BUTTON_X]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT and e.pressed):
+		for i in range(rooms.size() - 1, -1, -1):
+			if (rooms[i] as Rect2i).has_point(cursor):
+				rooms.remove_at(i); _play("death"); break
+		room_c0 = Vector2i(-1, -1); queue_redraw(); return
+	# déplacement curseur clavier/manette
+	var d := Vector2i.ZERO
+	if _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]): d = Vector2i(-1, 0)
+	elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]): d = Vector2i(1, 0)
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]): d = Vector2i(0, -1)
+	elif _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]): d = Vector2i(0, 1)
+	if d != Vector2i.ZERO:
+		cursor.x = clampi(cursor.x + d.x, 0, cols - 1)
+		cursor.y = clampi(cursor.y + d.y, 0, rows - 1)
+		aim = _w2s(Vector2((cursor.x + 0.5) * CELL, (cursor.y + 0.5) * CELL))
+		queue_redraw()
 
 
 func _bgedit_input(e: InputEvent) -> void:
@@ -1211,13 +1298,21 @@ func _menu_select() -> void:
 			level_props["player_hp"] = _cycle_preset(int(level_props.get("player_hp", tmpl.default_hp())), [0, 3, 5])
 			var hp: int = int(level_props["player_hp"])
 			_set_toast("PV joueur : %s" % (str(hp) + " cœurs" if hp > 0 else "désactivé"))
-		14: _toggle_music()
+		14:
+			var rooms := String(level_props.get("cam", "rooms")) == "rooms"
+			level_props["cam"] = "free" if rooms else "rooms"
+			cam_init = false
+			_set_toast("Caméra : %s" % ("libre" if rooms else "salles (verrou)"))
 		15:
+			room_edit = true; room_c0 = Vector2i(-1, -1)
+			menu_open = false; queue_redraw(); return
+		16: _toggle_music()
+		17:
 			show_fps = not show_fps
 			_set_toast("FPS %s" % ("ON" if show_fps else "OFF"))
-		16: _open_ai_panel()
-		17: _save_current(); states.change_state("ListState")
-		18: pass
+		18: _open_ai_panel()
+		19: _save_current(); states.change_state("ListState")
+		20: pass
 	menu_open = false
 	queue_redraw(); _redraw_world()   # vidage/thème/sonic peuvent changer le monde
 
@@ -1391,7 +1486,7 @@ func _new_project(template_id: String) -> void:
 	bg_theme = 0
 	undo_stack.clear(); redo_stack.clear()
 	tmpl.seed_demo()
-	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear()
+	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear(); rooms.clear(); cur_room = -1
 	# défaut par genre : top-down a les cœurs activés (3), platformer non
 	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
@@ -1449,6 +1544,10 @@ func _open_project(p: Dictionary) -> void:
 		var cp: PackedStringArray = String(k).split(",")
 		cell_cfg[Vector2i(int(cp[0]), int(cp[1]))] = data["cfg"][k]
 	bg_deco = data.get("bg_deco", [])
+	rooms = []
+	for ra in data.get("rooms", []):
+		rooms.append(Rect2i(int(ra[0]), int(ra[1]), int(ra[2]), int(ra[3])))
+	cur_room = -1
 	undo_stack.clear(); redo_stack.clear()
 	cursor = Vector2i(4, rows - 3)
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
@@ -1464,7 +1563,8 @@ func _save_current() -> void:
 		"cols": cols, "bg": bg_theme,
 		"props": level_props,
 		"screens": screens,
-		"tiles": {}, "cfg": {}, "bg_deco": bg_deco}
+		"tiles": {}, "cfg": {}, "bg_deco": bg_deco,
+		"rooms": rooms.map(func(r): return [r.position.x, r.position.y, r.size.x, r.size.y])}
 	for k in grid:
 		d["tiles"]["%d,%d" % [k.x, k.y]] = grid[k]
 	for k in cell_cfg:
@@ -1771,6 +1871,7 @@ func _update_fx(delta: float) -> void:
 func _start_play(from_cursor: bool) -> void:
 	tmpl.start_play(from_cursor)
 	mode = "play"
+	cam_init = false; cur_room = -1   # snap caméra (salle ou suivi) au démarrage du test
 	queue_redraw(); _redraw_world()
 
 
@@ -1789,10 +1890,47 @@ func _s2w(sp: Vector2) -> Vector2:
 	return (sp - view_origin) / view_scale
 
 
+const ROOM_VIEW_H := 11   # hauteur visible en cases (zoom constant, façon Celeste ~11 tuiles)
+
+# caméra style Celeste : ZOOM CONSTANT, suit le joueur, clampée aux bords de la salle
+func _compute_room_view(area: Rect2) -> void:
+	var pc: Vector2 = tmpl.ppos + tmpl.PSIZE * 0.5
+	var pcell := Vector2i(int(pc.x / CELL), int(pc.y / CELL))
+	for i in rooms.size():
+		if (rooms[i] as Rect2i).has_point(pcell):
+			cur_room = i; break
+	var sc: float = area.size.y / (ROOM_VIEW_H * CELL)   # zoom fixe (identique partout)
+	var target := area.position + area.size * 0.5 - pc * sc   # centré sur le joueur
+	if cur_room >= 0 and cur_room < rooms.size():
+		var r: Rect2i = rooms[cur_room]
+		target.x = _room_clamp(target.x, area.position.x, area.size.x, r.position.x * CELL, r.size.x * CELL, sc)
+		target.y = _room_clamp(target.y, area.position.y, area.size.y, r.position.y * CELL, r.size.y * CELL, sc)
+	if not cam_init:
+		view_scale = sc; view_origin = target; cam_init = true
+	else:
+		view_scale = lerpf(view_scale, sc, 0.18)
+		view_origin = view_origin.lerp(target, 0.18)
+
+
+# clampe l'origine pour que la vue reste DANS la salle (sinon centre si salle + petite)
+func _room_clamp(origin: float, area_min: float, area_size: float, room_min: float, room_size: float, sc: float) -> float:
+	var rsz := room_size * sc
+	if rsz <= area_size:
+		return area_min + (area_size - rsz) * 0.5 - room_min * sc   # salle + petite → centrée
+	var lo := area_min + area_size - (room_min + room_size) * sc    # bord droit/bas
+	var hi := area_min - room_min * sc                              # bord gauche/haut
+	return clampf(origin, lo, hi)
+
+
 func _compute_view() -> void:
 	var vp := get_viewport_rect().size
 	var area := Rect2(0, TOPBAR, vp.x, vp.y - TOPBAR - BOTTOM)
 	var lvl := Vector2(cols * CELL, rows * CELL)
+	if mode == "play" and cur_template == "topdown" and String(level_props.get("cam", "rooms")) == "rooms":
+		_compute_room_view(area)
+		if shake_t > 0.0:
+			view_origin += Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake_mag
+		return
 	if mode == "play":
 		view_scale = 1.0
 		view_origin = area.position + area.size * 0.5 - (tmpl.ppos + tmpl.PSIZE * 0.5) * view_scale
@@ -1824,6 +1962,9 @@ func _draw() -> void:
 	if screen == "template":   _draw_template(vp); return
 	if screen == "gamedash":   _draw_gamedash(vp); return
 	if screen == "screenedit": _draw_screenedit(vp); return
+	# jeu en mode salles : masque tout ce qui dépasse la salle courante (letterbox)
+	if mode == "play" and cur_template == "topdown" and String(level_props.get("cam", "rooms")) == "rooms" and cur_room >= 0 and cur_room < rooms.size():
+		_draw_room_mask(vp)
 	# édition/jeu : le monde est rendu par le template (derrière), ici le chrome par-dessus
 	if mode == "edit" and not radial_open and not bg_edit and get("hide_editor_chrome") != true:
 		_draw_edit_cursor()
@@ -1833,6 +1974,7 @@ func _draw() -> void:
 		_draw_gfx_strip()
 	if mode == "edit" and not menu_open and not radial_open and not bg_edit and aim.x >= 0.0:
 		_draw_reticle()
+	if room_edit: _draw_roomedit(vp)
 	if bg_edit: _draw_bgedit(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
