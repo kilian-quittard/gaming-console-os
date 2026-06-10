@@ -40,20 +40,7 @@ var cfg_fields := []           # [{key,label,options,...}] selon la tuile
 var show_fps := false          # overlay FPS (debug)
 var bg_edit := false
 var bg_deco := []              # formes placées : [{shape,...,factor,col}]
-var bg_shape := 0              # forme sélectionnée (index BG_SHAPES)
-var bg_depth := 1              # profondeur (index BG_DEPTHS)
-var bg_scale_i := 1            # taille (index BG_SCALES)
-var bg_tool := 0               # 0 = formes (stamps), 1 = polygone libre (dessin)
-var bg_pts := []               # points du polygone en cours [[x,y]] (coords monde)
-var bg_col := 0                # couleur sélectionnée (polygone)
-var bg_trig_l := false         # debounce gâchette L2 (reculer)
-var bg_trig_r := false         # debounce gâchette R2 (avancer)
-const BG_SHAPES := ["nuage", "montagne", "colline", "soleil", "lune", "etoile", "arbre", "sapin"]
-const BG_SHAPE_NAMES := ["Nuage", "Montagne", "Colline", "Soleil", "Lune", "Étoile", "Arbre", "Sapin"]
-const BG_DEPTHS := [0.08, 0.28, 0.55, 0.85]
-const BG_DEPTH_NAMES := ["loin", "moyen", "proche", "devant"]
-const BG_SCALES := [0.6, 1.0, 1.6, 2.4]
-const BG_COLORS := ["3a8f4f", "2e7d32", "1b5e20", "c68642", "8b4513", "7f8c8d", "5a6978", "2e1152", "e8a04b", "ecf0f1"]
+var bg_ed: BgEditor = null     # module d'édition du fond
 var cols := LEVEL_COLS_DEF
 var rows := 14
 var cursor := Vector2i(4, 8)
@@ -194,6 +181,7 @@ func _ready() -> void:
 	_compute_grid()
 	_build_audio()
 	room_ed = RoomEditor.new(self)
+	bg_ed = BgEditor.new(self)
 	ProjectStore.ensure_dir()
 	# instancie le template du genre courant (rendu du monde + simulation)
 	_load_template(cur_template)
@@ -326,7 +314,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if screen == "screenedit": _screenedit_input(e); return
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
-	if bg_edit:    _bgedit_input(e); return
+	if bg_edit:    bg_ed.input(e); return
 	if room_edit:  room_ed.input(e); return
 	if menu_open:
 		_menu_input(e); return
@@ -797,7 +785,7 @@ func _menu_def_build() -> Array:
 		{"label": "Configurer objet…", "act": _open_config, "modal": true},
 		{"label": "Vider niveau", "act": func() -> void:
 			_push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")},
-		{"label": "Customiser le fond…", "act": _open_bgedit, "modal": true},
+		{"label": "Customiser le fond…", "act": bg_ed.open, "modal": true},
 		{"label": "Autorun: %s" % _onoff(level_props.get("autorun", false)),
 			"act": func() -> void: _toggle_prop("autorun", "Autorun")},
 		{"label": "Physique Sonic: %s" % _onoff(level_props.get("sonic", false)),
@@ -906,134 +894,6 @@ func _config_input(e: InputEvent) -> void:
 
 
 # ---------------- édition du fond (vue parallax seule + placement de formes)
-const BG_NAMES := ["Ciel", "Espace", "Neige", "Désert"]
-
-func _open_bgedit() -> void:
-	bg_edit = true; queue_redraw(); _redraw_world()
-
-
-func _bgedit_input(e: InputEvent) -> void:
-	if e is InputEventMouseMotion:
-		aim = (e as InputEventMouseMotion).position; queue_redraw(); return
-	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_BACK, JOY_BUTTON_B]):
-		bg_edit = false; bg_pts.clear(); queue_redraw(); _redraw_world(); return
-	# bascule d'outil
-	if _press(e, [KEY_TAB], [JOY_BUTTON_LEFT_STICK]):
-		bg_tool = 1 - bg_tool; bg_pts.clear(); queue_redraw(); return
-	# valider le polygone en cours
-	if bg_tool == 1 and _press(e, [KEY_ENTER], [JOY_BUTTON_START]):
-		_bg_commit_poly(); return
-	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed:
-		var rects := _bg_icon_rects()
-		for i in rects.size():
-			if (rects[i] as Rect2).has_point(e.position):
-				if bg_tool == 0: bg_shape = i
-				else: bg_col = i % BG_COLORS.size()
-				queue_redraw(); return
-		_bg_place(); return
-	if _press(e, [KEY_SPACE], [JOY_BUTTON_A]):
-		_bg_place(); return
-	if _press(e, [KEY_DELETE, KEY_X], [JOY_BUTTON_X]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT and e.pressed):
-		if bg_tool == 1 and not bg_pts.is_empty(): bg_pts.pop_back(); queue_redraw()
-		else: _bg_erase()
-		return
-	if _press(e, [KEY_BRACKETLEFT, KEY_A], [JOY_BUTTON_LEFT_SHOULDER]):
-		if bg_tool == 0: bg_shape = (bg_shape - 1 + BG_SHAPES.size()) % BG_SHAPES.size()
-		else: bg_col = (bg_col - 1 + BG_COLORS.size()) % BG_COLORS.size()
-		queue_redraw()
-	elif _press(e, [KEY_BRACKETRIGHT, KEY_E], [JOY_BUTTON_RIGHT_SHOULDER]):
-		if bg_tool == 0: bg_shape = (bg_shape + 1) % BG_SHAPES.size()
-		else: bg_col = (bg_col + 1) % BG_COLORS.size()
-		queue_redraw()
-	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
-		if bg_tool == 0: bg_scale_i = mini(bg_scale_i + 1, BG_SCALES.size() - 1)
-		else: bg_col = (bg_col + 1) % BG_COLORS.size()
-		queue_redraw()
-	elif _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
-		if bg_tool == 0: bg_scale_i = maxi(bg_scale_i - 1, 0)
-		else: bg_col = (bg_col - 1 + BG_COLORS.size()) % BG_COLORS.size()
-		queue_redraw()
-	elif _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]):
-		bg_depth = maxi(bg_depth - 1, 0); queue_redraw()
-	elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]):
-		bg_depth = mini(bg_depth + 1, BG_DEPTHS.size() - 1); queue_redraw()
-	elif _press(e, [KEY_PAGEUP], []):
-		_bg_reorder(1)
-	elif _press(e, [KEY_PAGEDOWN], []):
-		_bg_reorder(-1)
-	elif _press(e, [KEY_Y], [JOY_BUTTON_Y]):
-		bg_theme = (bg_theme + 1) % BG_THEMES.size(); queue_redraw(); _redraw_world()
-
-
-func _bg_place() -> void:
-	var d: float = BG_DEPTHS[bg_depth]
-	var wx: float = (aim.x - view_origin.x * d) / view_scale
-	var wy: float = (aim.y - view_origin.y * d) / view_scale
-	if bg_tool == 1:
-		bg_pts.append([wx, wy]); queue_redraw(); return
-	bg_deco.append({"shape": BG_SHAPES[bg_shape], "x": wx, "y": wy,
-		"scale": BG_SCALES[bg_scale_i], "factor": d, "col": tmpl.bg_shape_color(BG_SHAPES[bg_shape], bg_theme).to_html(false)})
-	queue_redraw(); _redraw_world()
-
-
-func _bg_commit_poly() -> void:
-	if bg_pts.size() < 3:
-		_set_toast("Polygone : place au moins 3 points"); return
-	bg_deco.append({"shape": "poly", "factor": BG_DEPTHS[bg_depth],
-		"col": BG_COLORS[bg_col], "pts": bg_pts.duplicate(true)})
-	bg_pts.clear()
-	queue_redraw(); _redraw_world()
-
-
-func _bg_pick() -> int:
-	# décor le plus proche du pointeur (ancre = position stamp ou centroïde du polygone)
-	var best := -1; var bestd := 80.0
-	for i in bg_deco.size():
-		var dd: Dictionary = bg_deco[i]
-		var f: float = float(dd["factor"])
-		var sp: Vector2
-		if str(dd.get("shape", "")) == "poly":
-			var c := Vector2.ZERO
-			var pts: Array = dd["pts"]
-			for p in pts: c += Vector2(float(p[0]), float(p[1]))
-			c /= float(max(1, pts.size()))
-			sp = Vector2(c.x * view_scale + view_origin.x * f, c.y * view_scale + view_origin.y * f)
-		else:
-			sp = Vector2(float(dd["x"]) * view_scale + view_origin.x * f, float(dd["y"]) * view_scale + view_origin.y * f)
-		var dist := sp.distance_to(aim)
-		if dist < bestd: bestd = dist; best = i
-	return best
-
-
-func _bg_reorder(dir: int) -> void:
-	# change la PROFONDEUR du décor visé (= son plan vs collines + parallax).
-	# dir > 0 : rapprocher (devant) ; dir < 0 : éloigner (derrière)
-	var i := _bg_pick()
-	if i < 0:
-		_set_toast("Vise un décor pour changer son plan"); return
-	var dd: Dictionary = bg_deco[i]
-	var cur: float = float(dd["factor"])
-	var ci := 0; var cd := 1e9
-	for j in BG_DEPTHS.size():
-		var diff: float = absf(float(BG_DEPTHS[j]) - cur)
-		if diff < cd: cd = diff; ci = j
-	ci = clampi(ci + dir, 0, BG_DEPTHS.size() - 1)
-	dd["factor"] = BG_DEPTHS[ci]
-	# garde un ordre de tableau cohérent : devant = fin, derrière = début
-	bg_deco.remove_at(i)
-	if dir > 0: bg_deco.append(dd)
-	else: bg_deco.insert(0, dd)
-	_set_toast("Plan : %s" % BG_DEPTH_NAMES[ci])
-	queue_redraw(); _redraw_world()
-
-
-func _bg_erase() -> void:
-	# gère stamps ET polygones (via _bg_pick, qui ne lit pas dd["x"] sur un poly)
-	var i := _bg_pick()
-	if i >= 0:
-		bg_deco.remove_at(i); queue_redraw(); _redraw_world()
-
-
 func _menu_input(e: InputEvent) -> void:
 	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
 		menu_idx = (menu_idx + 1) % menu_items.size(); queue_redraw()
@@ -1400,12 +1260,7 @@ func _process(delta: float) -> void:
 		aim.x = clampf(aim.x, ab.position.x, ab.position.x + ab.size.x)
 		aim.y = clampf(aim.y, ab.position.y, ab.position.y + ab.size.y)
 		if _edge_pan(ab, delta, sb): _redraw_world()
-		# gâchettes : reculer (L2) / avancer (R2) le décor visé — sur front montant
-		var tr := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_RIGHT) > 0.6
-		var tl := Input.get_joy_axis(0, JOY_AXIS_TRIGGER_LEFT) > 0.6
-		if tr and not bg_trig_r: _bg_reorder(1)
-		if tl and not bg_trig_l: _bg_reorder(-1)
-		bg_trig_r = tr; bg_trig_l = tl
+		bg_ed.process_triggers()   # L2/R2 : reculer/avancer le décor visé
 		queue_redraw()
 		return
 	# --- pointeur libre : stick (vélocité) + croix directionnelle (pas d'une cellule) ---
@@ -1687,7 +1542,7 @@ func _draw() -> void:
 	if mode == "edit" and not menu_open and not radial_open and not bg_edit and aim.x >= 0.0:
 		_draw_reticle()
 	if room_edit: room_ed.draw(vp)
-	if bg_edit: _draw_bgedit(vp)
+	if bg_edit: bg_ed.draw(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
 	if cfg_open: _draw_config(vp)
@@ -1741,99 +1596,6 @@ func _draw_config(vp: Vector2) -> void:
 	_text(f, o + Vector2(16, ph - 10), "◄ ► régler   ▲▼ champ   B fermer", Color(1, 1, 1, 0.4), 11)
 
 
-func _draw_bgedit(vp: Vector2) -> void:
-	# le chrome (barres) est dessiné par _draw_bg_topbar/_hints
-	if bg_tool == 0:
-		# aperçu fantôme de la forme au pointeur
-		if aim.x >= 0.0:
-			var gs: float = BG_SCALES[bg_scale_i] * view_scale
-			var gcol: Color = tmpl.bg_shape_color(BG_SHAPES[bg_shape], bg_theme); gcol.a = 0.55
-			tmpl.draw_bg_shape(self, BG_SHAPES[bg_shape], aim, gs, gcol)
-			draw_arc(aim, 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
-	else:
-		# forme fermée libre en cours : points dans l'ordre, fermeture auto (dernier→premier)
-		var d: float = BG_DEPTHS[bg_depth]
-		var col := Color(BG_COLORS[bg_col])
-		var screen_pts := PackedVector2Array()
-		for p in bg_pts:
-			screen_pts.append(Vector2(float(p[0]) * view_scale + view_origin.x * d, float(p[1]) * view_scale + view_origin.y * d))
-		var preview := PackedVector2Array(screen_pts)
-		if aim.x >= 0.0: preview.append(aim)
-		if preview.size() >= 3:
-			var fill := col; fill.a = 0.4
-			tmpl.fill_poly_closed(self, preview, fill)
-		# contour fermé (relie aussi le dernier au premier)
-		var m := preview.size()
-		for i in m:
-			draw_line(preview[i], preview[(i + 1) % m], col, 2.0)
-		for i in screen_pts.size():
-			draw_circle(screen_pts[i], 4.0, Color("f39c12"))
-		if aim.x >= 0.0:
-			draw_arc(aim, 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.8), 1.5)
-		_text(ThemeDB.fallback_font, Vector2(aim.x + 10, aim.y - 8), "%d pts — Entrée pour fermer" % screen_pts.size(), Color(1, 1, 1, 0.7), 12)
-
-
-func _sorted_by_x(pts: PackedVector2Array) -> Array:
-	var arr := []
-	for p in pts: arr.append(p)
-	arr.sort_custom(func(a, b): return a.x < b.x)
-	return arr
-
-
-func _bg_icon_rects() -> Array:
-	# rectangles cliquables (formes en mode stamp, couleurs en mode polygone)
-	var out := []
-	var n: int = BG_SHAPES.size() if bg_tool == 0 else BG_COLORS.size()
-	var x := 150.0
-	for i in n:
-		out.append(Rect2(Vector2(x, 4), Vector2(44, 44)))
-		x += 48.0
-	return out
-
-
-func _draw_bg_topbar(vp: Vector2) -> void:
-	var f := ThemeDB.fallback_font
-	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, TOPBAR)), Color("11161f"))
-	_text(f, Vector2(12, 22), "FOND", Color("f39c12"), 16)
-	_text(f, Vector2(12, 42), "Formes" if bg_tool == 0 else "Polygone", Color(1, 1, 1, 0.7), 12)
-	var rects := _bg_icon_rects()
-	for i in rects.size():
-		var box: Rect2 = rects[i]
-		if bg_tool == 0:
-			var act := (i == bg_shape)
-			draw_rect(box, Color("223349") if act else Color("1a2233"))
-			tmpl.draw_bg_shape(self, BG_SHAPES[i], box.position + box.size * 0.5, 0.42, tmpl.bg_shape_color(BG_SHAPES[i], bg_theme))
-			draw_rect(box, Color("f39c12") if act else Color(1, 1, 1, 0.15), false, 3.0 if act else 1.0)
-		else:
-			var acc := (i == bg_col)
-			draw_rect(box, Color(BG_COLORS[i]))
-			draw_rect(box, Color("f39c12") if acc else Color(1, 1, 1, 0.2), false, 3.0 if acc else 1.0)
-	var rx: float = rects[rects.size() - 1].end.x + 14.0
-	_text(f, Vector2(rx, 20), "Prof: %s   Taille: %.1f" % [BG_DEPTH_NAMES[bg_depth], BG_SCALES[bg_scale_i]], Color(1, 1, 1, 0.85), 12)
-	_text(f, Vector2(rx, 40), "Thème: %s   (TAB outil)" % [BG_NAMES[bg_theme] if bg_theme < BG_NAMES.size() else str(bg_theme)], Color(1, 1, 1, 0.6), 12)
-
-
-func _draw_bg_hints(vp: Vector2) -> void:
-	draw_rect(Rect2(Vector2(0, vp.y - BOTTOM), Vector2(vp.x, BOTTOM)), Color("131a14"))
-	var x := 12.0
-	var y := vp.y - BOTTOM + 6.0
-	x = _badge(x, y, "TAB", "Outil")
-	if bg_tool == 0:
-		x = _badge(x, y, "A", "Poser")
-		x = _badge(x, y, "X", "Effacer")
-		x = _badge(x, y, "A/E", "Forme")
-		x = _badge(x, y, "↑↓", "Taille")
-	else:
-		x = _badge(x, y, "A", "Point")
-		x = _badge(x, y, "Enter", "Valider")
-		x = _badge(x, y, "X", "Retirer pt")
-		x = _badge(x, y, "A/E", "Couleur")
-	x = _badge(x, y, "←→", "Profondeur")
-	x = _badge(x, y, "L2/R2", "Arr./Av. plan")
-	x = _badge(x, y, "Y", "Thème")
-	x = _badge(x, y, "B", "Sortir")
-
-
 func _draw_reticle() -> void:
 	var c := Color("f39c12") if grabbing else Color.WHITE
 	draw_arc(aim, 9.0, 0.0, TAU, 18, Color(c.r, c.g, c.b, 0.85), 1.8)
@@ -1846,7 +1608,7 @@ func _draw_reticle() -> void:
 
 func _draw_topbar(vp: Vector2) -> void:
 	if bg_edit:
-		_draw_bg_topbar(vp); return
+		bg_ed.draw_topbar(vp); return
 	draw_rect(Rect2(Vector2.ZERO, Vector2(vp.x, TOPBAR)), Color("11161f"))
 	var f := ThemeDB.fallback_font
 	if mode == "edit":
@@ -1923,7 +1685,7 @@ func _draw_topbar(vp: Vector2) -> void:
 
 func _draw_hints(vp: Vector2) -> void:
 	if bg_edit:
-		_draw_bg_hints(vp); return
+		bg_ed.draw_hints(vp); return
 	draw_rect(Rect2(Vector2(0, vp.y - BOTTOM), Vector2(vp.x, BOTTOM)), Color("11161f"))
 	var x := 12.0
 	var y := vp.y - BOTTOM + 6.0
