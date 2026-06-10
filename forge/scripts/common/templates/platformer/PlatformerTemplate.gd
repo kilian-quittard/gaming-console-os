@@ -53,7 +53,8 @@ const STICK_TOL := 26.0
 const LAND_TOL := 30.0
 const LOOP_R := 3.0 * CELL     # rayon looping (144px)
 const LOOP_WALL := CELL * 0.3  # epaisseur mur looping
-const LOOP_OPEN := 0.5236      # demi-angle ouverture bas (30 deg)
+const LOOP_OPEN := 0.20944     # demi-angle ouverture bas (12 deg) : base du mur a ~3px
+                               # du sol avec une pente de 12 deg = rampe d'entree naturelle
 
 # --- etat du genre ---
 var input_x := 0
@@ -74,9 +75,12 @@ var gangle := 0.0        # angle du sol (radians)
 var sonic_grounded := false
 var land_debug := ""
 var active_loops: Array = []
-var loop_exit_cd := 0.0  # cooldown post-loop
-var last_loop = null     # loop quitte (le cooldown ne bloque QUE celui-ci)
-var _on_loop := false
+var rail_lp = null       # loop dont le joueur suit le RAIL (null = aucun)
+var rail_th := 0.0       # angle position sur le rail (atan2 depuis le centre)
+var rail_topped := false # le SOMMET a été franchi pendant ce parcours → loop validé
+var rail_r := 0.0        # rayon courant des pieds (converge vers la surface interne)
+var rail_fb0 := 0.0      # angle (depuis le bas) où le sol rencontre le cercle (entrée)
+var rail_exit_y := 0.0   # hauteur du sol enregistrée à l'entrée (sortie continue)
 
 
 # =================================================== contrat du genre
@@ -136,7 +140,7 @@ func start_play(from_cursor: bool) -> void:
 func _build_extra() -> void:
 	plats.clear(); active_loops.clear()
 	hazards.clear(); crumble_t.clear(); fb_t.clear()
-	last_loop = null; loop_exit_cd = 0.0; _on_loop = false
+	rail_lp = null
 	for k in app.grid:
 		if app.grid[k] == FIREBAR:
 			hazards.append({"type": "firebar", "center": Vector2((k.x + 0.5) * CELL, (k.y + 0.5) * CELL), "ang": 0.0})
@@ -725,16 +729,8 @@ func _solid_at(p: Vector2, check_loops: bool = true) -> bool:
 	for pl in plats:   # plateformes mobiles : solides aussi en mode Sonic
 		if Rect2(pl.pos, Vector2(int(pl.get("w", 1)) * CELL, 14)).has_point(p):
 			return true
-	if check_loops and not active_loops.is_empty():
-		for lp in active_loops:
-			if loop_exit_cd > 0.0 and lp == last_loop: continue   # loop quitté = traversable
-			var lc: Vector2 = lp.center
-			var lr: float = lp.radius
-			var d: float = (p - lc).length()
-			if d >= lr - LOOP_WALL and d <= lr:
-				var theta: float = atan2(p.y - lc.y, p.x - lc.x)
-				if absf(wrapf(theta - PI * 0.5, -PI, PI)) > LOOP_OPEN:
-					return true
+	# NOTE loops : les anneaux ne sont PAS solides — le joueur les parcourt via
+	# le RAIL paramétrique (_rail_update). check_loops conservé pour l'API.
 	return false
 
 
@@ -778,18 +774,127 @@ func _ground_angle(x: float, foot_y: float) -> float:
 	return atan2(y2 - y1, 2.0 * d)
 
 
+# ====================== LOOP = RAIL paramétrique (méthode fiable) ======================
+# Le joueur sur un loop n'est PAS géré par capteurs : sa position = un angle θ
+# sur le cercle, avancé de gsp/r par frame. Déterministe : zéro snap, zéro dérive.
+# Entrée : au sol, en franchissant le bord de l'ouverture (toutes vitesses).
+# Pente : sin(gangle) freine en montée → trop lent = redescend et ressort. Naturel.
+# Sortie : θ revient dans l'ouverture → reposé au sol, cooldown anti-recapture.
+func _rail_try_enter(pc: Vector2) -> void:
+	for lp in active_loops:
+		var cl: int = int(lp.get("cleared", 0))   # 0=armé, +1=validé vers la droite, -1=vers la gauche
+		if cl != 0 and (cl > 0) == (gsp > 0.0): continue   # déverrouillé DANS CE SENS → traverse
+		var lc: Vector2 = lp.center
+		var r_in: float = lp.radius - LOOP_WALL - PSIZE.y * 0.5
+		var d: float = (pc - lc).length()
+		# capture au CONTACT du mur, tolérante à l'alignement grille/sol
+		# (le cercle est forcément enterré OU flottant d'une demi-case)
+		if d < r_in - 4.0 or d > lp.radius + 28.0: continue
+		var th: float = atan2(pc.y - lc.y, pc.x - lc.x)
+		if sin(th) < 0.25: continue                   # moitié basse uniquement
+		var fb: float = absf(wrapf(th - PI * 0.5, -PI, PI))
+		if fb <= 0.02 or fb > 1.2: continue
+		# direction : il faut avancer VERS le mur…
+		var toward: bool = (gsp > 0.0 and th < PI * 0.5) or (gsp < 0.0 and th > PI * 0.5)
+		if not toward: continue
+		# …ET dans le SENS imposé par le côté d'entrée (entré à gauche → vers la droite)
+		var side: int = int(lp.get("side", 0))
+		if side != 0 and (side > 0) != (gsp > 0.0): continue
+		rail_lp = lp
+		rail_th = th
+		rail_topped = false
+		lp["cleared"] = 0
+		rail_r = clampf(d, r_in, lp.radius + 30.0)   # part d'où on est : zéro snap
+		rail_fb0 = fb
+		rail_exit_y = ppos.y                  # hauteur du sol pour la sortie
+		return
+
+
+func _rail_update(delta: float, ix: int) -> void:
+	var lp = rail_lp
+	var lc: Vector2 = lp.center
+	var r_in: float = lp.radius - LOOP_WALL - PSIZE.y * 0.5   # pieds sur la surface interne
+	var r_fl: float = lp.radius - PSIZE.y * 0.5               # pieds au niveau du plancher
+	# tangente actuelle (sert à l'accélération et aux détachements)
+	gangle = wrapf(atan2(-cos(rail_th), sin(rail_th)), -PI, PI)
+	# accélération / friction / pente : MÊMES règles que le sol
+	if ix != 0:
+		if gsp == 0.0 or signf(float(ix)) == signf(gsp):
+			gsp += ix * SONIC_ACC * delta
+		else:
+			gsp += ix * SONIC_DEC * delta
+	else:
+		gsp = move_toward(gsp, 0.0, SONIC_FRIC * delta)
+	gsp += sin(gangle) * SONIC_SLOPE * delta
+	gsp = clampf(gsp, -SONIC_TOP, SONIC_TOP)
+	# saut : quitte le rail (normale = vers le centre)
+	if jbuf > 0.0:
+		jbuf = 0.0
+		var up := -Vector2(cos(rail_th), sin(rail_th))
+		pvel = Vector2(cos(gangle), sin(gangle)) * gsp + up * SONIC_JUMP
+		rail_lp = null
+		if rail_topped: lp["cleared"] = 1 if gsp >= 0.0 else -1
+		sonic_grounded = false; on_floor = false
+		gangle = 0.0
+		app.squash = Vector2(0.78, 1.25)
+		Input.start_joy_vibration(0, 0.10, 0.25, 0.07); app._play("jump")
+		return
+	# trop lent : sur les MURS on reste collé au rail (la pente fait reglisser
+	# vers le bas) ; on ne décroche qu'au PLAFOND (>135°) → chute À L'INTÉRIEUR
+	# du loop, jamais de l'autre côté
+	var deg: float = absf(rad_to_deg(gangle))
+	if absf(gsp) < 120.0 and deg > 135.0:
+		pvel = Vector2(cos(gangle), sin(gangle)) * gsp
+		rail_lp = null
+		if rail_topped: lp["cleared"] = 1 if gsp >= 0.0 else -1
+		sonic_grounded = false; on_floor = false
+		gsp = 0.0
+		return
+	# avance le long du cercle (θ décroît quand on va à droite)
+	rail_th = wrapf(rail_th - (gsp / rail_r) * delta, -PI, PI)
+	# franchir le SOMMET (milieu haut) = loop validé → il deviendra traversable
+	if absf(wrapf(rail_th + PI * 0.5, -PI, PI)) < 0.25:
+		rail_topped = true
+	var fb: float = absf(wrapf(rail_th - PI * 0.5, -PI, PI))
+	# sortie : revenu à l'angle où le sol rencontre le cercle (des 2 côtés).
+	# Loop validé (sommet franchi) → traversable jusqu'à quitter sa zone ;
+	# glissade ratée → le loop reste actif.
+	if fb <= rail_fb0:
+		ppos.x = lc.x + cos(rail_th) * (lp.radius if rail_fb0 > LOOP_OPEN else rail_r) - PSIZE.x * 0.5
+		ppos.y = rail_exit_y          # exactement la hauteur de sol de l'entrée
+		rail_lp = null
+		if rail_topped: lp["cleared"] = 1 if gsp >= 0.0 else -1
+		lp["side"] = -1 if gsp >= 0.0 else 1   # sorti vers la droite = désormais "entré par la droite"
+		gangle = 0.0
+		on_floor = true
+		return
+	# rayon des pieds : converge en douceur vers la surface interne (zéro snap)
+	rail_r = move_toward(rail_r, r_in, 260.0 * delta)
+	var new_pc: Vector2 = lc + Vector2(cos(rail_th), sin(rail_th)) * rail_r
+	ppos = new_pc - PSIZE * 0.5
+	on_floor = true
+	land_debug = "RAIL θ=%.0f° gsp=%.0f" % [rad_to_deg(rail_th), gsp]
+
+
 func _sonic_physics(delta: float) -> void:
 	input_x = _dir_x()
 	jbuf -= delta
 	switch_cd -= delta
-	loop_exit_cd = maxf(0.0, loop_exit_cd - delta)
 	var ix := autorun_dir if _autorun() else input_x
 	var pc := ppos + PSIZE * 0.5
-	land_debug = "gsp=%.0f ang=%.0f° %s%s" % [
-		gsp, rad_to_deg(gangle),
-		"LOOP " if _on_loop else "",
-		("lcd=%.1f" % loop_exit_cd) if loop_exit_cd > 0.0 else ""
-	]
+	land_debug = "gsp=%.0f ang=%.0f°" % [gsp, rad_to_deg(gangle)]
+
+	# zones de loop : le CÔTÉ d'entrée dans la zone fixe le sens unique de prise ;
+	# sommet franchi → sortie déverrouillée (cleared, directionnel) ; quitter la
+	# zone réarme tout
+	for lp in active_loops:
+		var dl: float = (pc - lp.center).length()
+		if dl > lp.radius + 60.0:
+			lp["cleared"] = 0
+			lp["side"] = 0
+		elif int(lp.get("side", 0)) == 0 and pc.y > lp.center.y:
+			lp["side"] = 1 if pc.x < lp.center.x else -1   # +1 = entré par la GAUCHE → prise vers la droite
+
 
 	var in_water := _in_water()
 	if in_water != was_in_water:
@@ -799,6 +904,12 @@ func _sonic_physics(delta: float) -> void:
 	_update_air(delta, in_water)
 
 	if sonic_grounded:
+		# === RAIL de loop : entrée puis suivi paramétrique (cercle exact) ===
+		if rail_lp == null:
+			_rail_try_enter(pc)
+		if rail_lp != null:
+			_rail_update(delta, ix)
+			return
 		# accélération / friction le long de la surface
 		if ix != 0:
 			if gsp == 0.0 or signf(float(ix)) == signf(gsp):
@@ -887,34 +998,11 @@ func _point_in_loop(p: Vector2) -> bool:
 	return false
 
 
-# capte le sol : mode analytique sur loop (cercle exact), sinon sondes. recale ppos+gangle.
+# capte le sol AUX CAPTEURS uniquement (méthode Sonic Physics Guide) : le loop
+# n'est PAS un objet spécial — c'est une surface solide continue que les sondes
+# suivent comme n'importe quelle pente. Pas d'état "attaché", pas de snap :
+# trop lent dans le mur = la pente (sin(gangle)) te fait reglisser naturellement.
 func _ground_sense(pc: Vector2) -> bool:
-	# === mode analytique : joueur collé au cercle du loop ===
-	if _on_loop and not active_loops.is_empty():
-		for lp in active_loops:
-			if loop_exit_cd > 0.0 and lp == last_loop: continue
-			var lc: Vector2 = lp.center
-			var lr: float = lp.radius
-			var target_d := lr - LOOP_WALL - PSIZE.y * 0.5   # 111.6px : centre→surface interne
-			var theta := atan2(pc.y - lc.y, pc.x - lc.x)
-			var in_opening := absf(wrapf(theta - PI * 0.5, -PI, PI)) <= LOOP_OPEN
-			if in_opening:
-				# joueur revenu dans l'ouverture → sortie normale du loop
-				_on_loop = false
-				last_loop = lp; loop_exit_cd = 0.8
-				gangle = 0.0   # reset pour que le capteur sol retrouve le plancher proprement
-				break
-			var d: float = (pc - lc).length()
-			if absf(d - target_d) < 36.0:
-				# colle au cercle, gangle = tangente CCW (classique Sonic)
-				pc = lc + Vector2(cos(theta), sin(theta)) * target_d
-				gangle = wrapf(atan2(-cos(theta), sin(theta)), -PI, PI)
-				ppos = pc - PSIZE * 0.5
-				return true
-		# dérivé trop loin du cercle OU sortie par l'ouverture → retomber en mode capteur
-		_on_loop = false
-
-	# === mode capteur standard (sol plat / pentes / entry loop) ===
 	var dn := Vector2(-sin(gangle), cos(gangle))
 	var fw := Vector2(cos(gangle), sin(gangle))
 	var reach := PSIZE.y * 0.5 + 22.0
@@ -931,27 +1019,6 @@ func _ground_sense(pc: Vector2) -> bool:
 
 	pc += dn * clampf(dc - PSIZE.y * 0.5, -20.0, 20.0)
 
-	# entrée loop : mur trouvé au-dessus du sol + côté cohérent avec gsp
-	# (gsp > 0 = va à droite → entrée valide seulement côté droit, theta < 90°)
-	if not _on_loop and not active_loops.is_empty() and dc < PSIZE.y * 0.5 - 2.0:
-		for lp in active_loops:
-			if loop_exit_cd > 0.0 and lp == last_loop: continue   # pas de re-entrée du loop quitté
-			var lc: Vector2 = lp.center
-			var lr: float = lp.radius
-			var target_d := lr - LOOP_WALL - PSIZE.y * 0.5
-			var d: float = (pc - lc).length()
-			if absf(d - target_d) < 24.0:
-				var theta := atan2(pc.y - lc.y, pc.x - lc.x)
-				if absf(wrapf(theta - PI * 0.5, -PI, PI)) > LOOP_OPEN:
-					# entrée valide seulement du bon côté selon direction du joueur
-					var valid_side := theta < PI * 0.5 if gsp >= 0.0 else theta > PI * 0.5
-					if valid_side:
-						_on_loop = true
-						gangle = wrapf(atan2(-cos(theta), sin(theta)), -PI, PI)
-						pc = lc + Vector2(cos(theta), sin(theta)) * target_d
-						ppos = pc - PSIZE * 0.5
-						return true
-
 	var off := 10.0
 	var oa := pc + fw * (-off)
 	var ob := pc + fw * (off)
@@ -961,7 +1028,14 @@ func _ground_sense(pc: Vector2) -> bool:
 		var ha := oa + dn * da
 		var hb := ob + dn * db
 		var raw := atan2(hb.y - ha.y, hb.x - ha.x)
-		var step: float = clampf(angle_difference(gangle, raw), -deg_to_rad(18.0), deg_to_rad(18.0))
+		var diff := angle_difference(gangle, raw)
+		# lissage 18°/frame en temps normal ; jonction brutale (vallée en V) =
+		# rotation accélérée mais PLAFONNÉE (45°/frame) : assez vite pour ne pas
+		# labourer la pente opposée, sans téléporter la position (recale ≤20px/frame)
+		var max_step: float = deg_to_rad(18.0)
+		if absf(diff) >= deg_to_rad(30.0):
+			max_step = deg_to_rad(45.0)
+		var step: float = clampf(diff, -max_step, max_step)
 		gangle = wrapf(gangle + step, -PI, PI)
 	ppos = pc - PSIZE * 0.5
 	return true
@@ -1077,6 +1151,25 @@ func _update_air(delta: float, in_water: bool) -> void:
 func _draw_world_extra() -> void:
 	for lp in active_loops:
 		_draw_loop_ring(app._w2s(lp.center), lp.radius * app.view_scale)
+	# debug (toggle FPS) : zones du loop — capture (bas), sommet, réarmement, point rail
+	if app.get("show_fps") == true and _sonic():
+		var vs: float = app.view_scale
+		for lp in active_loops:
+			var c: Vector2 = app._w2s(lp.center)
+			var r_in: float = lp.radius - LOOP_WALL - PSIZE.y * 0.5
+			var armed: bool = int(lp.get("cleared", 0)) == 0
+			var col := Color(0.2, 1.0, 0.3, 0.7) if armed else Color(0.65, 0.65, 0.65, 0.5)
+			# bande de capture (moitié basse) : intérieur + extérieur
+			draw_arc(c, (r_in - 4.0) * vs, 0.25, PI - 0.25, 24, col, 2.0)
+			draw_arc(c, (lp.radius + 28.0) * vs, 0.25, PI - 0.25, 24, col, 2.0)
+			# zone sommet (validation)
+			draw_arc(c, lp.radius * vs, -PI * 0.5 - 0.25, -PI * 0.5 + 0.25, 8, Color(1.0, 0.85, 0.2, 0.9), 4.0)
+			# rayon de réarmement (sortie consommée au-delà)
+			draw_arc(c, (lp.radius + 60.0) * vs, 0.0, TAU, 48, Color(0.3, 0.7, 1.0, 0.3), 1.5)
+		# position exacte sur le rail
+		if rail_lp != null:
+			var rp: Vector2 = rail_lp.center + Vector2(cos(rail_th), sin(rail_th)) * rail_r
+			draw_circle(app._w2s(rp), 5.0, Color(1.0, 0.25, 0.25))
 	for p in plats:
 		for wi in int(p.get("w", 1)):
 			draw_tile(self, app._w2s(p.pos + Vector2(wi * CELL, 0)), MOVPLAT, app.view_scale)
