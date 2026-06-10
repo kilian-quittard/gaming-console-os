@@ -7,7 +7,6 @@ const CELL := 48
 const TOPBAR := 52
 const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
-const PROJ_DIR := "user://forge_projects/"
 const TEMPLATES := {
 	"2D": [{"id": "platformer", "name": "Plateformer"}, {"id": "topdown", "name": "Vue de dessus"}],
 	"3D": []
@@ -181,81 +180,21 @@ var audio: ForgeAudio
 var tmpl: TemplateBase = null
 @onready var states: State = $States
 
-# style graphique rétro (skin appliqué au monde via shader ; UI non affectée)
-var gfx_mat: ShaderMaterial = null
-const GFX_STYLES := [
-	{"name": "GB",   "mode": 1, "sw": Color("8bac0f"), "px": 4.0},
-	{"name": "GBC",  "mode": 2, "sw": Color("f8b800"), "px": 3.0},
-	{"name": "SNES", "mode": 0, "sw": Color("7878f8"), "px": 1.0},
-	{"name": "GBA",  "mode": 3, "sw": Color("3cbc8c"), "px": 2.0},
-]
-var pix_rect: ColorRect = null   # post-process plein écran : pixelise le monde (UI reste nette)
+# style graphique rétro : délégué au module GfxStyles
+var gfx: GfxStyles = null
 var rooms := []                  # salles (style Celeste) : Array[Rect2i] en cases
 var cur_room := -1               # salle courante (le joueur dedans)
 var room_edit := false           # mode édition des salles
-var room_c0 := Vector2i(-1, -1)  # 1er coin en cours de tracé
-var gfx_trans := 0.0             # transition de switch de thème (wipe)
-var gfx_pending := -1            # mode à appliquer à mi-transition
-const GFX_TRANS_DUR := 0.5
-const PIX_SHADER := """
-shader_type canvas_item;
-uniform sampler2D screen : hint_screen_texture, filter_nearest;
-uniform float px = 1.0;
-void fragment() {
-	vec2 uv = SCREEN_UV;
-	if (px > 1.0) {
-		vec2 res = vec2(textureSize(screen, 0));
-		vec2 block = vec2(px) / res;
-		uv = (floor(SCREEN_UV / block) + 0.5) * block;
-	}
-	COLOR = texture(screen, uv);
-}
-"""
-const GFX_SHADER := """
-shader_type canvas_item;
-uniform int mode = 0;
-void fragment() {
-	vec4 c = COLOR;
-	float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-	vec3 o = c.rgb;
-	if (mode == 1) {
-		// GB : vert 4 teintes (DMG)
-		float q = clamp(floor(l * 4.0) / 3.0, 0.0, 1.0);
-		o = mix(vec3(0.058, 0.219, 0.058), vec3(0.607, 0.737, 0.058), q);
-	} else if (mode == 2) {
-		// GBC : postérisé + couleurs vives
-		o = clamp(floor(c.rgb * 6.0) / 5.0 * 1.08, 0.0, 1.0);
-	} else if (mode == 0) {
-		// SNES : vibrant (saturation + contraste boostés, CRT punchy)
-		o = clamp(mix(vec3(l), c.rgb, 1.35), 0.0, 1.0);
-		o = clamp((o - 0.5) * 1.12 + 0.5, 0.0, 1.0);
-	} else if (mode == 3) {
-		// GBA : délavé mais clair = léger désaturé + boost luminosité (multiplicatif, pas de voile)
-		o = mix(c.rgb, vec3(l), 0.16);
-		o *= vec3(1.07, 1.08, 1.0);
-		o = clamp(o, 0.0, 1.0);
-	}
-	COLOR = vec4(o, c.a);
-}
-"""
+var room_ed: RoomEditor = null   # module d'édition des salles
 
 
 func _ready() -> void:
 	get_window().min_size = Vector2i(960, 600)
-	var sh := Shader.new(); sh.code = GFX_SHADER
-	gfx_mat = ShaderMaterial.new(); gfx_mat.shader = sh
-	# post-process de pixelisation (derrière l'UI, devant le monde)
-	var psh := Shader.new(); psh.code = PIX_SHADER
-	var pmat := ShaderMaterial.new(); pmat.shader = psh
-	pix_rect = ColorRect.new()
-	pix_rect.material = pmat
-	pix_rect.show_behind_parent = true
-	pix_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pix_rect.visible = false
-	add_child(pix_rect)
+	gfx = GfxStyles.new(self)
 	_compute_grid()
 	_build_audio()
-	DirAccess.make_dir_recursive_absolute(PROJ_DIR)
+	room_ed = RoomEditor.new(self)
+	ProjectStore.ensure_dir()
 	# instancie le template du genre courant (rendu du monde + simulation)
 	_load_template(cur_template)
 	queue_redraw()
@@ -273,26 +212,14 @@ func _load_template(kind: String) -> void:
 	var scene = TEMPLATE_SCENES.get(kind, TEMPLATE_SCENES["platformer"])
 	tmpl_kind = kind if TEMPLATE_SCENES.has(kind) else "platformer"
 	tmpl = scene.instantiate()
-	tmpl.material = gfx_mat   # skin graphique appliqué au monde
 	add_child(tmpl)
-	if pix_rect: move_child(pix_rect, get_child_count() - 1)   # pixelise par-dessus le monde
+	gfx.attach_world(tmpl)   # skin + pixelisation par-dessus le monde
 	tmpl.setup(self)
-	_apply_gfx()
+	gfx.apply()
 	# adapte cat_pal au nombre de catégories du genre
 	cat_pal = []
 	for _i in tmpl.categories().size(): cat_pal.append(0)
 	cat = clampi(cat, 0, maxi(0, cat_pal.size() - 1))
-
-
-func _apply_gfx() -> void:
-	var mode := int(level_props.get("gfx", 0))
-	if gfx_mat: gfx_mat.set_shader_parameter("mode", mode)
-	var px := 1.0
-	for s in GFX_STYLES:
-		if int(s["mode"]) == mode: px = float(s["px"])
-	if pix_rect:
-		pix_rect.material.set_shader_parameter("px", px)
-		pix_rect.visible = px > 1.0
 
 
 # cache les marges autour de la salle courante (on ne voit QUE la salle)
@@ -312,86 +239,6 @@ func _draw_room_mask(vp: Vector2) -> void:
 		draw_rect(Rect2(Vector2(0, p0.y), Vector2(p0.x, sz.y)), col)
 	if p0.x + sz.x < vp.x:
 		draw_rect(Rect2(Vector2(p0.x + sz.x, p0.y), Vector2(vp.x - (p0.x + sz.x), sz.y)), col)
-
-
-func _draw_roomedit(vp: Vector2) -> void:
-	var f := ThemeDB.fallback_font
-	# bandeau bas
-	draw_rect(Rect2(Vector2(0, vp.y - 30), Vector2(vp.x, 30)), Color(13.0/255, 17.0/255, 23.0/255, 0.9))
-	_text(f, Vector2(12, vp.y - 10), "ÉDITER SALLES — A: poser coin/valider · X: supprimer · B: fini   (salles: %d)" % rooms.size(), Color("ecf0f1"), 13)
-	# salles existantes
-	for i in rooms.size():
-		var r: Rect2i = rooms[i]
-		var sr := Rect2(_w2s(Vector2(r.position) * CELL), Vector2(r.size) * CELL * view_scale)
-		draw_rect(sr, Color(0.2, 0.8, 1.0, 0.10))
-		draw_rect(sr, Color("3cb4e8"), false, 2.0)
-		_text(f, sr.position + Vector2(4, 16), "S%d" % (i + 1), Color("3cb4e8"), 13)
-	# rectangle en cours (1er coin posé)
-	if room_c0.x >= 0:
-		var x0 := mini(room_c0.x, cursor.x); var y0 := mini(room_c0.y, cursor.y)
-		var x1 := maxi(room_c0.x, cursor.x); var y1 := maxi(room_c0.y, cursor.y)
-		var pr := Rect2(_w2s(Vector2(x0 * CELL, y0 * CELL)), Vector2((x1 - x0 + 1) * CELL, (y1 - y0 + 1) * CELL) * view_scale)
-		draw_rect(pr, Color(1.0, 0.6, 0.1, 0.18))
-		draw_rect(pr, Color("f39c12"), false, 2.0)
-	# curseur
-	var cp := _w2s(Vector2(cursor.x * CELL, cursor.y * CELL))
-	draw_rect(Rect2(cp, Vector2(CELL, CELL) * view_scale), Color("f39c12"), false, 2.0)
-
-
-func _draw_gfx_trans(vp: Vector2) -> void:
-	if gfx_trans <= 0.0: return
-	var f := ThemeDB.fallback_font
-	var t: float = 1.0 - clampf(gfx_trans / GFX_TRANS_DUR, 0.0, 1.0)   # 0 → 1
-	var col := Color("11161b")
-	# 1re moitié : le voile avance (gauche→droite). 2de moitié : il se retire.
-	var cover := Rect2(Vector2.ZERO, Vector2(0, vp.y))
-	if t < 0.5:
-		cover = Rect2(Vector2.ZERO, Vector2((t / 0.5) * vp.x, vp.y))
-	else:
-		var x: float = ((t - 0.5) / 0.5) * vp.x
-		cover = Rect2(Vector2(x, 0), Vector2(vp.x - x, vp.y))
-	draw_rect(cover, col)
-	# liseré lumineux sur le bord qui balaie
-	var edge_x: float = cover.position.x + cover.size.x if t < 0.5 else cover.position.x
-	draw_rect(Rect2(Vector2(edge_x - 3, 0), Vector2(6, vp.y)), Color("f39c12"))
-	# nom du thème ciblé, centré
-	var mode := gfx_pending if gfx_pending >= 0 else int(level_props.get("gfx", 0))
-	var nm := ""
-	for s in GFX_STYLES:
-		if int(s["mode"]) == mode: nm = str(s["name"])
-	if nm != "" and cover.size.x > vp.x * 0.4:
-		_text(f, Vector2(vp.x * 0.5 - 28, vp.y * 0.5), nm, Color("ecf0f1"), 28)
-
-
-func _gfx_strip_rects() -> Array:
-	var out := []
-	var y0 := float(TOPBAR) + 12.0
-	for i in GFX_STYLES.size():
-		out.append(Rect2(Vector2(6, y0 + i * 50.0), Vector2(46, 44)))
-	return out
-
-
-func _draw_gfx_strip() -> void:
-	var f := ThemeDB.fallback_font
-	var rects := _gfx_strip_rects()
-	var cur: int = int(level_props.get("gfx", 0))
-	var panel := Rect2(Vector2(2, TOPBAR + 6), Vector2(54, rects.size() * 50.0 + 8.0))
-	draw_rect(panel, Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.85))
-	for i in rects.size():
-		var r: Rect2 = rects[i]
-		var st: Dictionary = GFX_STYLES[i]
-		var active := int(st["mode"]) == cur
-		draw_rect(r, st["sw"])
-		draw_rect(r, Color("f39c12") if active else Color(0, 0, 0, 0.4), false, 3.0 if active else 1.0)
-		_text(f, Vector2(r.position.x + 4, r.position.y + 28), str(st["name"]), Color("11161f"), 12)
-
-
-func _set_gfx(mode: int) -> void:
-	if mode == int(level_props.get("gfx", 0)) and gfx_trans <= 0.0: return
-	gfx_pending = mode           # appliqué à mi-balayage (caché)
-	gfx_trans = GFX_TRANS_DUR
-	_play("coin")
-	queue_redraw()
 
 
 func _self_test() -> void:
@@ -480,7 +327,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
 	if bg_edit:    _bgedit_input(e); return
-	if room_edit:  _roomedit_input(e); return
+	if room_edit:  room_ed.input(e); return
 	if menu_open:
 		_menu_input(e); return
 	if mode == "edit":
@@ -538,12 +385,9 @@ func _edit_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton:
 		var mb := e as InputEventMouseButton
 		aim = mb.position
-		# menu de style graphique (bande gauche) : clic = sélection, ne pose pas de tuile
-		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-			var grects := _gfx_strip_rects()
-			for i in grects.size():
-				if (grects[i] as Rect2).has_point(mb.position):
-					_set_gfx(int(GFX_STYLES[i]["mode"])); return
+		# bande de styles graphiques (gauche) : clic = sélection, ne pose pas de tuile
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and gfx.click(mb.position):
+			return
 		_sync_cursor_from_aim()
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and not radial_open and not sel_mode: _begin_stroke(true)
@@ -978,8 +822,7 @@ func _menu_def_build() -> Array:
 				level_props["cam"] = "free" if was else "rooms"
 				cam_init = false
 				_set_toast("Caméra : %s" % ("libre" if was else "salles (verrou)"))},
-		{"label": "Éditer les salles… (%d)" % rooms.size(), "modal": true, "act": func() -> void:
-			room_edit = true; room_c0 = Vector2i(-1, -1)},
+		{"label": "Éditer les salles… (%d)" % rooms.size(), "modal": true, "act": room_ed.open},
 		{"label": "Musique: %s" % _onoff(audio.music_on), "act": _toggle_music},
 		{"label": "FPS (debug): %s" % _onoff(show_fps), "act": func() -> void:
 			show_fps = not show_fps
@@ -1067,43 +910,6 @@ const BG_NAMES := ["Ciel", "Espace", "Neige", "Désert"]
 
 func _open_bgedit() -> void:
 	bg_edit = true; queue_redraw(); _redraw_world()
-
-
-# édition des salles (style Celeste) : A = poser les 2 coins d'un rectangle, X = supprimer
-func _roomedit_input(e: InputEvent) -> void:
-	if e is InputEventMouseMotion:
-		aim = (e as InputEventMouseMotion).position; _sync_cursor_from_aim(); queue_redraw(); return
-	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_BACK, JOY_BUTTON_B]):
-		room_edit = false; room_c0 = Vector2i(-1, -1); _save_current(); queue_redraw(); _redraw_world(); return
-	if e is InputEventMouseButton and e.pressed:
-		aim = e.position; _sync_cursor_from_aim()
-	# A / clic gauche : pose un coin puis le coin opposé → crée la salle
-	if _press(e, [KEY_ENTER, KEY_SPACE], [JOY_BUTTON_A]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT and e.pressed):
-		if room_c0.x < 0:
-			room_c0 = cursor
-		else:
-			var x0 := mini(room_c0.x, cursor.x); var y0 := mini(room_c0.y, cursor.y)
-			var x1 := maxi(room_c0.x, cursor.x); var y1 := maxi(room_c0.y, cursor.y)
-			rooms.append(Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
-			room_c0 = Vector2i(-1, -1); _play("coin")
-		queue_redraw(); return
-	# X / clic droit : supprime la salle sous le curseur
-	if _press(e, [KEY_X, KEY_DELETE], [JOY_BUTTON_X]) or (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT and e.pressed):
-		for i in range(rooms.size() - 1, -1, -1):
-			if (rooms[i] as Rect2i).has_point(cursor):
-				rooms.remove_at(i); _play("death"); break
-		room_c0 = Vector2i(-1, -1); queue_redraw(); return
-	# déplacement curseur clavier/manette
-	var d := Vector2i.ZERO
-	if _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]): d = Vector2i(-1, 0)
-	elif _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]): d = Vector2i(1, 0)
-	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]): d = Vector2i(0, -1)
-	elif _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]): d = Vector2i(0, 1)
-	if d != Vector2i.ZERO:
-		cursor.x = clampi(cursor.x + d.x, 0, cols - 1)
-		cursor.y = clampi(cursor.y + d.y, 0, rows - 1)
-		aim = _w2s(Vector2((cursor.x + 0.5) * CELL, (cursor.y + 0.5) * CELL))
-		queue_redraw()
 
 
 func _bgedit_input(e: InputEvent) -> void:
@@ -1385,23 +1191,9 @@ func _draw_ai_panel(vp: Vector2) -> void:
 
 
 # ---------------- projets
-func _proj_path(name: String) -> String:
-	return PROJ_DIR + name.replace(" ", "_") + ".json"
-
-
+# persistance déléguée à ProjectStore (pur I/O)
 func _scan_projects(dim: String) -> void:
-	proj_list.clear()
-	var d := DirAccess.open(PROJ_DIR)
-	if d == null: return
-	for fn in d.get_files():
-		if not fn.ends_with(".json"): continue
-		var fa := FileAccess.open(PROJ_DIR + fn, FileAccess.READ)
-		if fa == null: continue
-		var data = JSON.parse_string(fa.get_as_text())
-		fa.close()
-		if typeof(data) == TYPE_DICTIONARY and String(data.get("dim", "2D")) == dim:
-			proj_list.append({"name": String(data.get("name", fn)), "dim": dim,
-				"template": String(data.get("template", "platformer")), "path": PROJ_DIR + fn})
+	proj_list = ProjectStore.list(dim)
 
 
 func _new_project(template_id: String) -> void:
@@ -1409,7 +1201,7 @@ func _new_project(template_id: String) -> void:
 	_load_template(cur_template)
 	var base := "Plateformer"
 	var i := 1
-	while FileAccess.file_exists(_proj_path("%s %d" % [base, i])): i += 1
+	while ProjectStore.exists("%s %d" % [base, i]): i += 1
 	cur_project = "%s %d" % [base, i]
 	cols = LEVEL_COLS_DEF
 	bg_theme = 0
@@ -1419,7 +1211,7 @@ func _new_project(template_id: String) -> void:
 	# défaut par genre : top-down a les cœurs activés (3), platformer non
 	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
-	_apply_gfx()
+	gfx.apply()
 	_save_current()
 	mode = "edit"; dash_sel = 0
 	states.change_state("GameDashState")
@@ -1430,11 +1222,9 @@ func _open_project(p: Dictionary) -> void:
 	cur_template = String(p.get("template", "platformer"))
 	_load_template(cur_template)
 	cur_project = String(p.get("name", ""))
-	var fa := FileAccess.open(String(p.get("path", "")), FileAccess.READ)
-	if fa == null:
+	var data = ProjectStore.load_file(String(p.get("path", "")))
+	if typeof(data) != TYPE_DICTIONARY:
 		_set_toast("Ouverture impossible"); return
-	var data = JSON.parse_string(fa.get_as_text())
-	fa.close()
 	cols = int(data.get("cols", LEVEL_COLS_DEF))
 	bg_theme = int(data.get("bg", 0)) % BG_THEMES.size()  # fond du NIVEAU (gameplay)
 	var pr = data.get("props", {})
@@ -1480,7 +1270,7 @@ func _open_project(p: Dictionary) -> void:
 	undo_stack.clear(); redo_stack.clear()
 	cursor = Vector2i(4, rows - 3)
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
-	_apply_gfx()
+	gfx.apply()
 	mode = "edit"; dash_sel = 0
 	states.change_state("GameDashState")
 
@@ -1498,9 +1288,7 @@ func _save_current() -> void:
 		d["tiles"]["%d,%d" % [k.x, k.y]] = grid[k]
 	for k in cell_cfg:
 		d["cfg"]["%d,%d" % [k.x, k.y]] = cell_cfg[k]
-	var f := FileAccess.open(_proj_path(cur_project), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(d)); f.close()
+	if ProjectStore.save(d):
 		_set_toast("Sauvegardé : %s" % cur_project)
 	else:
 		_set_toast("Erreur sauvegarde")
@@ -1570,12 +1358,8 @@ func _stick() -> Vector2:
 func _process(delta: float) -> void:
 	anim_t += delta
 	_update_fx(delta)
-	# transition de style : applique le nouveau skin à mi-balayage (caché par le wipe)
-	if gfx_trans > 0.0:
-		gfx_trans -= delta
-		if gfx_pending >= 0 and gfx_trans <= GFX_TRANS_DUR * 0.5:
-			level_props["gfx"] = gfx_pending; gfx_pending = -1
-			_apply_gfx(); _redraw_world()
+	# transition de style graphique (wipe) : déléguée au module
+	if gfx.process(delta):
 		queue_redraw()
 	if toast_t > 0.0:
 		toast_t -= delta
@@ -1884,8 +1668,7 @@ func _compute_view() -> void:
 # ============================================================= DRAW (chrome uniquement ; le monde = template)
 func _draw() -> void:
 	var vp := get_viewport_rect().size
-	if pix_rect and pix_rect.visible:
-		pix_rect.size = vp; pix_rect.position = Vector2.ZERO
+	gfx.resize(vp)
 	if screen == "dim":        _draw_dim(vp); return
 	if screen == "list":       _draw_list(vp); return
 	if screen == "template":   _draw_template(vp); return
@@ -1900,10 +1683,10 @@ func _draw() -> void:
 	_draw_topbar(vp)
 	_draw_hints(vp)
 	if mode == "edit" and not bg_edit:
-		_draw_gfx_strip()
+		gfx.draw_strip()
 	if mode == "edit" and not menu_open and not radial_open and not bg_edit and aim.x >= 0.0:
 		_draw_reticle()
-	if room_edit: _draw_roomedit(vp)
+	if room_edit: room_ed.draw(vp)
 	if bg_edit: _draw_bgedit(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
@@ -1917,7 +1700,7 @@ func _draw() -> void:
 		var txt := "%d FPS" % fps
 		draw_rect(Rect2(Vector2(vp.x - 86, TOPBAR + 6), Vector2(76, 22)), Color(0, 0, 0, 0.55))
 		_text(ThemeDB.fallback_font, Vector2(vp.x - 78, TOPBAR + 22), txt, fcol, 14)
-	_draw_gfx_trans(vp)   # wipe de transition de thème (au-dessus de tout)
+	gfx.draw_transition(vp)   # wipe de transition de style (au-dessus de tout)
 
 
 func _draw_edit_cursor() -> void:
