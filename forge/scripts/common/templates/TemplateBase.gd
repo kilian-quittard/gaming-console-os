@@ -25,7 +25,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FLYER, FISH, SPIKER,
 	CHASER, HOPPER, BOUNCER, SHOOTER,
 	FALLBLOCK, FIREBAR, CRUMBLE,
-	BOSS, FLOOR, PLATE, PUSHBLOCK }
+	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -44,7 +44,8 @@ const NAMES := {
 	FLYER: "Volant", FISH: "Poisson", SPIKER: "Piquant",
 	CHASER: "Fantôme", HOPPER: "Sauteur", BOUNCER: "Rebond", SHOOTER: "Tourelle",
 	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable",
-	BOSS: "Boss", FLOOR: "Sol", PLATE: "Dalle", PUSHBLOCK: "Bloc poussable"
+	BOSS: "Boss", FLOOR: "Sol", PLATE: "Dalle", PUSHBLOCK: "Bloc poussable",
+	WARP: "Sortie (warp)"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -63,7 +64,8 @@ const COLORS := {
 	FLYER: Color("9b59b6"), FISH: Color("e67e22"), SPIKER: Color("c0392b"),
 	CHASER: Color("ecf0f1"), HOPPER: Color("16a085"), BOUNCER: Color("e84393"), SHOOTER: Color("34495e"),
 	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968"),
-	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f"), PLATE: Color("d4a017"), PUSHBLOCK: Color("8d6e63")
+	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f"), PLATE: Color("d4a017"), PUSHBLOCK: Color("8d6e63"),
+	WARP: Color("9b59f5")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -194,6 +196,14 @@ func config_fields(t: int) -> Array:
 	# objets liés par couleur (clé/porte + interrupteur/grille/dalle)
 	if t == KEY or t == DOOR or t == SWITCH or t == GATE or t == PLATE:
 		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert", "rose"], "def": "or"}]
+	# sortie/warp : sa propre porte n° + destination (niveau + porte d'arrivée)
+	if t == WARP:
+		var lvls: Array = app.level_ids()
+		return [
+			{"key": "id",   "label": "Porte n°",     "opts": [1, 2, 3, 4], "def": 1},
+			{"key": "dest", "label": "Vers niveau",  "opts": lvls,          "def": lvls[0] if not lvls.is_empty() else "1"},
+			{"key": "door", "label": "Porte arrivée", "opts": [1, 2, 3, 4], "def": 1},
+		]
 	return []
 
 
@@ -668,6 +678,8 @@ func _interactions(delta: float) -> void:
 				_die()
 			SPRING:
 				_touch_spring(c)
+			WARP:
+				app._warp_play(c)
 			SWITCH:
 				if switch_cd <= 0.0:
 					var scol := _cell_color(c)
@@ -1425,6 +1437,13 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 		SWITCH:
 			ci.draw_rect(Rect2(p + Vector2(pad, cs * 0.55), Vector2(cs - pad * 2, cs * 0.45 - pad)), col.darkened(0.2))
 			ci.draw_rect(Rect2(p + Vector2(cs * 0.28, cs * 0.35), Vector2(cs * 0.44, cs * 0.22)), col)
+		WARP:
+			# portail : double anneau + tourbillon
+			var wc := p + Vector2(cs, cs) * 0.5
+			var wt: float = float(app.anim_t) if app != null else 0.0
+			ci.draw_arc(wc, cs * 0.36, 0, TAU, 20, col, 3.0 * scale)
+			ci.draw_arc(wc, cs * 0.24, wt * 2.0, wt * 2.0 + TAU * 0.7, 14, col.lightened(0.3), 2.0 * scale)
+			ci.draw_circle(wc, cs * 0.08, col.lightened(0.5))
 		GATE:
 			# barreaux fermés (les grilles OUVERTES sont sautées au rendu en play)
 			for i in 2:

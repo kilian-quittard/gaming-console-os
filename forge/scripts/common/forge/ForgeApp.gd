@@ -171,6 +171,12 @@ var tmpl: TemplateBase = null
 var gfx: GfxStyles = null
 var rooms := []                  # salles (style Celeste) : Array[Rect2i] en cases
 var cur_room := -1               # salle courante (le joueur dedans)
+# multi-niveaux : un projet = N niveaux interconnectés par des tuiles WARP.
+# Le niveau ACTIF vit dans grid/cell_cfg/bg_deco/rooms/cols/bg_theme ;
+# les autres sont rangés (format natif) dans levels[id].
+var levels := {}                 # id (String) -> niveau rangé (format natif)
+var cur_level := "1"
+var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
 var room_edit := false           # mode édition des salles
 var room_ed: RoomEditor = null   # module d'édition des salles
 
@@ -811,6 +817,9 @@ func _menu_def_build() -> Array:
 				cam_init = false
 				_set_toast("Caméra : %s" % ("libre" if was else "salles (verrou)"))},
 		{"label": "Éditer les salles… (%d)" % rooms.size(), "modal": true, "act": room_ed.open},
+		{"label": "Niveau: %s / %d  (suivant)" % [cur_level, level_ids().size()], "act": _cycle_level},
+		{"label": "Nouveau niveau", "act": _add_level},
+		{"label": "Supprimer ce niveau", "act": _delete_level},
 		{"label": "Musique: %s" % _onoff(audio.music_on), "act": _toggle_music},
 		{"label": "FPS (debug): %s" % _onoff(show_fps), "act": func() -> void:
 			show_fps = not show_fps
@@ -1068,6 +1077,7 @@ func _new_project(template_id: String) -> void:
 	undo_stack.clear(); redo_stack.clear()
 	tmpl.seed_demo()
 	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear(); rooms.clear(); cur_room = -1
+	levels = {}; cur_level = "1"; warp_cd = 0.0
 	# défaut par genre : top-down a les cœurs activés (3), platformer non
 	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
@@ -1075,6 +1085,21 @@ func _new_project(template_id: String) -> void:
 	_save_current()
 	mode = "edit"; dash_sel = 0
 	states.change_state("GameDashState")
+
+
+func _parse_level(ld: Dictionary) -> Dictionary:
+	var L := {"cols": int(ld.get("cols", LEVEL_COLS_DEF)),
+		"bg": int(ld.get("bg", 0)) % BG_THEMES.size(),
+		"tiles": {}, "cfg": {}, "bg_deco": ld.get("bg_deco", []), "rooms": []}
+	for k in ld.get("tiles", {}):
+		var parts: PackedStringArray = String(k).split(",")
+		L["tiles"][Vector2i(int(parts[0]), int(parts[1]))] = int(ld["tiles"][k])
+	for k in ld.get("cfg", {}):
+		var cp: PackedStringArray = String(k).split(",")
+		L["cfg"][Vector2i(int(cp[0]), int(cp[1]))] = ld["cfg"][k]
+	for ra in ld.get("rooms", []):
+		L["rooms"].append(Rect2i(int(ra[0]), int(ra[1]), int(ra[2]), int(ra[3])))
+	return L
 
 
 func _open_project(p: Dictionary) -> void:
@@ -1085,8 +1110,6 @@ func _open_project(p: Dictionary) -> void:
 	var data = ProjectStore.load_file(String(p.get("path", "")))
 	if typeof(data) != TYPE_DICTIONARY:
 		_set_toast("Ouverture impossible"); return
-	cols = int(data.get("cols", LEVEL_COLS_DEF))
-	bg_theme = int(data.get("bg", 0)) % BG_THEMES.size()  # fond du NIVEAU (gameplay)
 	var pr = data.get("props", {})
 	level_props = pr if typeof(pr) == TYPE_DICTIONARY else {}
 	screens = {}
@@ -1114,19 +1137,18 @@ func _open_project(p: Dictionary) -> void:
 			"subtitle": data.get("subtitle", ""),
 			"deco": {}, "stamps": [], "texts": {},
 		}
-	grid.clear()
-	for k in data.get("tiles", {}):
-		var parts: PackedStringArray = String(k).split(",")
-		grid[Vector2i(int(parts[0]), int(parts[1]))] = int(data["tiles"][k])
-	cell_cfg.clear()
-	for k in data.get("cfg", {}):
-		var cp: PackedStringArray = String(k).split(",")
-		cell_cfg[Vector2i(int(cp[0]), int(cp[1]))] = data["cfg"][k]
-	bg_deco = data.get("bg_deco", [])
-	rooms = []
-	for ra in data.get("rooms", []):
-		rooms.append(Rect2i(int(ra[0]), int(ra[1]), int(ra[2]), int(ra[3])))
-	cur_room = -1
+	# niveaux : nouveau format {levels} ou migration de l'ancien (grille racine)
+	levels = {}
+	if data.has("levels"):
+		for id in data["levels"]:
+			levels[str(id)] = _parse_level(data["levels"][id])
+		cur_level = str(data.get("cur_level", "1"))
+		if not levels.has(cur_level): cur_level = str(levels.keys()[0])
+	else:
+		levels["1"] = _parse_level(data)   # ancien projet = 1 niveau
+		cur_level = "1"
+	_level_unpack(levels[cur_level])
+	levels.erase(cur_level)
 	undo_stack.clear(); redo_stack.clear()
 	cursor = Vector2i(4, rows - 3)
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
@@ -1135,19 +1157,28 @@ func _open_project(p: Dictionary) -> void:
 	states.change_state("GameDashState")
 
 
+func _serialize_level(L: Dictionary) -> Dictionary:
+	var out := {"cols": int(L.get("cols", LEVEL_COLS_DEF)), "bg": int(L.get("bg", 0)),
+		"tiles": {}, "cfg": {}, "bg_deco": L.get("bg_deco", []),
+		"rooms": (L.get("rooms", []) as Array).map(func(r): return [r.position.x, r.position.y, r.size.x, r.size.y])}
+	for k in L.get("tiles", {}):
+		out["tiles"]["%d,%d" % [k.x, k.y]] = L["tiles"][k]
+	for k in L.get("cfg", {}):
+		out["cfg"]["%d,%d" % [k.x, k.y]] = L["cfg"][k]
+	return out
+
+
 func _save_current() -> void:
 	if cur_project == "":
 		cur_project = "Plateformer 1"
+	var all_levels := levels.duplicate()
+	all_levels[cur_level] = _level_pack()
+	var lv := {}
+	for id in all_levels:
+		lv[id] = _serialize_level(all_levels[id])
 	var d := {"name": cur_project, "dim": cur_dim, "template": cur_template,
-		"cols": cols, "bg": bg_theme,
-		"props": level_props,
-		"screens": screens,
-		"tiles": {}, "cfg": {}, "bg_deco": bg_deco,
-		"rooms": rooms.map(func(r): return [r.position.x, r.position.y, r.size.x, r.size.y])}
-	for k in grid:
-		d["tiles"]["%d,%d" % [k.x, k.y]] = grid[k]
-	for k in cell_cfg:
-		d["cfg"]["%d,%d" % [k.x, k.y]] = cell_cfg[k]
+		"props": level_props, "screens": screens,
+		"levels": lv, "cur_level": cur_level}
 	if ProjectStore.save(d):
 		_set_toast("Sauvegardé : %s" % cur_project)
 	else:
@@ -1224,6 +1255,7 @@ func _process(delta: float) -> void:
 	if toast_t > 0.0:
 		toast_t -= delta
 		if toast_t <= 0.0: queue_redraw()
+	if warp_cd > 0.0: warp_cd -= delta
 	if show_fps: queue_redraw()   # overlay FPS : rafraîchit le chrome (monde intact)
 	if screen == "screenedit":
 		_screenedit_process(delta)
@@ -1436,6 +1468,103 @@ func _update_fx(delta: float) -> void:
 
 
 # ============================================================= PLAY (délégué au template)
+# =============================================== MULTI-NIVEAUX (zones reliées)
+func level_ids() -> Array:
+	var ids := levels.keys()
+	if not ids.has(cur_level): ids.append(cur_level)
+	ids.sort()
+	return ids
+
+
+func _level_pack() -> Dictionary:
+	return {"cols": cols, "bg": bg_theme, "tiles": grid.duplicate(),
+		"cfg": cell_cfg.duplicate(true), "bg_deco": bg_deco.duplicate(true),
+		"rooms": rooms.duplicate()}
+
+
+func _level_unpack(L: Dictionary) -> void:
+	cols = int(L.get("cols", LEVEL_COLS_DEF))
+	bg_theme = int(L.get("bg", 0)) % BG_THEMES.size()
+	grid = L.get("tiles", {})
+	cell_cfg = L.get("cfg", {})
+	bg_deco = L.get("bg_deco", [])
+	rooms = L.get("rooms", [])
+	cur_room = -1
+	undo_stack.clear(); redo_stack.clear()
+	_auto_resize_cols()
+	cam_init = false
+
+
+func _switch_level(id: String) -> void:
+	if id == cur_level or not levels.has(id): return
+	levels[cur_level] = _level_pack()
+	cur_level = id
+	_level_unpack(levels[id])
+	queue_redraw(); _redraw_world()
+
+
+func _add_level() -> void:
+	levels[cur_level] = _level_pack()
+	var n := 1
+	while levels.has(str(n)) or str(n) == cur_level: n += 1
+	cur_level = str(n)
+	cols = LEVEL_COLS_DEF; bg_theme = 0
+	grid = {}; cell_cfg = {}; bg_deco = []; rooms = []
+	cur_room = -1
+	undo_stack.clear(); redo_stack.clear()
+	tmpl.seed_demo()
+	_auto_resize_cols()
+	_set_toast("Niveau %s créé" % cur_level)
+	queue_redraw(); _redraw_world()
+
+
+func _delete_level() -> void:
+	if levels.is_empty():
+		_set_toast("Impossible : dernier niveau"); return
+	var ids := levels.keys(); ids.sort()
+	var nxt: String = ids[0]
+	cur_level = nxt
+	_level_unpack(levels[nxt])
+	levels.erase(nxt)
+	_set_toast("Niveau supprimé → %s" % cur_level)
+	queue_redraw(); _redraw_world()
+
+
+func _cycle_level() -> void:
+	var ids := level_ids()
+	if ids.size() < 2:
+		_set_toast("Un seul niveau (Nouveau niveau pour en ajouter)"); return
+	var i := ids.find(cur_level)
+	_switch_level(str(ids[(i + 1) % ids.size()]))
+	_set_toast("Niveau %s" % cur_level)
+
+
+# warp en PLAY : touche une tuile Sortie → bascule de niveau + spawn à la porte cible
+func _warp_play(c: Vector2i) -> void:
+	if warp_cd > 0.0 or mode != "play": return
+	var cfg: Dictionary = cell_cfg.get(c, {})
+	var dest := str(cfg.get("dest", ""))
+	var door := int(cfg.get("door", 1))
+	if dest == "" or dest == cur_level or not (levels.has(dest) or dest == cur_level):
+		_set_toast("Sortie non configurée (Configurer objet…)"); warp_cd = 1.0; return
+	_switch_level(dest)
+	# porte d'arrivée : warp du niveau cible dont l'id correspond
+	var arrival := Vector2i(-1, -1)
+	for k in grid:
+		if grid[k] == tmpl.WARP and int(cell_cfg.get(k, {}).get("id", 1)) == door:
+			arrival = k; break
+	tmpl._build_entities()
+	if arrival == Vector2i(-1, -1):
+		arrival = tmpl._find(tmpl.SPAWN)
+		if arrival == Vector2i(-1, -1): arrival = Vector2i(2, 2)
+	tmpl._place_player(arrival)
+	tmpl.respawn_cell = arrival
+	warp_cd = 1.0
+	cam_init = false; cur_room = -1
+	_play("key")
+	queue_redraw(); _redraw_world()
+
+
 func _start_play(from_cursor: bool) -> void:
 	tmpl.start_play(from_cursor)
 	mode = "play"

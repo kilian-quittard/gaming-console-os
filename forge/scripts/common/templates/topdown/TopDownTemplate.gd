@@ -21,7 +21,7 @@ var shoot_cd := 0.0
 # palette de l'éditeur pour ce genre (mur = GROUND solide ; sol = case vide)
 const TD_CATS := [
 	{"name": "Mur",     "tiles": [GROUND, BREAKABLE]},
-	{"name": "Repères", "tiles": [SPAWN, GOAL, DOOR, CHECKPOINT]},
+	{"name": "Repères", "tiles": [SPAWN, GOAL, DOOR, CHECKPOINT, WARP]},
 	{"name": "Items",   "tiles": [COIN, KEY]},
 	{"name": "Méca",    "tiles": [SWITCH, GATE, PLATE, PUSHBLOCK]},
 	{"name": "Ennemis", "tiles": [ENEMY, CHASER, FLYER, SHOOTER, BOSS]},
