@@ -436,8 +436,21 @@ func _play_input(e: InputEvent) -> void:
 		tmpl.start_play(tmpl.last_from_cursor)
 
 
+# cartes du dash : un NIVEAU par carte + "+ Nouveau" + les écrans de jeu
+func _dash_entries() -> Array:
+	var out := []
+	for id in level_ids():
+		out.append({"label": "Niveau %s" % id, "key": "level", "id": id})
+	out.append({"label": "+ Nouveau niveau", "key": "newlevel"})
+	for i in range(1, DASH_KEYS.size()):
+		out.append({"label": DASH_ITEMS[i], "key": DASH_KEYS[i]})
+	return out
+
+
 func _gamedash_input(e: InputEvent) -> void:
-	var n := DASH_ITEMS.size()
+	var entries := _dash_entries()
+	var n := entries.size()
+	dash_sel = clampi(dash_sel, 0, n - 1)
 	if _press(e, [KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT]):
 		if dash_sel % 2 == 0 and dash_sel + 1 < n: dash_sel += 1; queue_redraw()
 	elif _press(e, [KEY_LEFT], [JOY_BUTTON_DPAD_LEFT]):
@@ -449,12 +462,17 @@ func _gamedash_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
 		states.change_state("ListState")
 	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
-		var key: String = DASH_KEYS[dash_sel]
-		if key == "editor":
-			states.change_state("EditorState")
-		else:
-			edit_screen_key = key; edit_prop_sel = 0; text_edit_mode = false
-			states.change_state("ScreenEditState")
+		var ent: Dictionary = entries[dash_sel]
+		match str(ent["key"]):
+			"level":
+				_switch_level(str(ent["id"]))
+				states.change_state("EditorState")
+			"newlevel":
+				_add_level()
+				states.change_state("EditorState")
+			_:
+				edit_screen_key = str(ent["key"]); edit_prop_sel = 0; text_edit_mode = false
+				states.change_state("ScreenEditState")
 
 
 func _cur_screen() -> Dictionary:
@@ -1983,24 +2001,53 @@ func _draw_gamedash(vp: Vector2) -> void:
 	_shell_bg(vp)
 	var f := ThemeDB.fallback_font
 	_ctext(f, vp.x * 0.5, 34, cur_project.to_upper(), Color.WHITE, 22)
+	var entries := _dash_entries()
 	var pad := 18.0; var gap_x := 12.0; var gap_y := 10.0
 	var card_w := (vp.x - 2.0 * pad - gap_x) * 0.5
 	var label_h := 26.0
-	var card_h := (vp.y - 56.0 - 30.0 - 2.0 * gap_y) / 3.0
+	var rows_n: int = maxi(1, int(ceil(entries.size() / 2.0)))
+	var card_h := (vp.y - 56.0 - 30.0 - float(rows_n - 1) * gap_y) / float(rows_n)
 	var prev_h := card_h - label_h
-	for i in DASH_ITEMS.size():
+	for i in entries.size():
+		var ent: Dictionary = entries[i]
 		var ci := i % 2; var ri := i / 2
 		var x := pad + ci * (card_w + gap_x)
 		var y := 56.0 + ri * (card_h + gap_y)
 		var sel_i := i == dash_sel
 		var pr := Rect2(x, y, card_w, prev_h)
-		var key_i: String = DASH_KEYS[i]
-		_draw_screen_preview(pr, key_i)
+		match str(ent["key"]):
+			"level":
+				_draw_level_preview(pr, str(ent["id"]))
+			"newlevel":
+				draw_rect(pr, Color("0d1117"))
+				_ctext(f, pr.position.x + pr.size.x * 0.5, pr.position.y + pr.size.y * 0.6, "+", Color(1, 1, 1, 0.5), 38)
+			_:
+				_draw_screen_preview(pr, str(ent["key"]))
 		draw_rect(Rect2(x, y + prev_h, card_w, label_h), Color(0, 0, 0, 0.55))
 		var lcol := UI_ACCENT if sel_i else Color(1, 1, 1, 0.65)
-		_ctext(f, x + card_w * 0.5, y + prev_h + label_h * 0.72, DASH_ITEMS[i], lcol, 13)
+		var lbl: String = str(ent["label"]) + ("  ●" if str(ent.get("id", "")) == cur_level and str(ent["key"]) == "level" else "")
+		_ctext(f, x + card_w * 0.5, y + prev_h + label_h * 0.72, lbl, lcol, 13)
 		draw_rect(Rect2(x, y, card_w, card_h), UI_ACCENT if sel_i else Color(1, 1, 1, 0.18), false, 3.0 if sel_i else 1.0)
 	_ctext(f, vp.x * 0.5, vp.y - 14, "◀▶▲▼ naviguer    A ouvrir    B liste projets", Color(1, 1, 1, 0.45), 13)
+
+
+# mini-aperçu d'un niveau (carte du dash) : chaque tuile = un pixel coloré
+func _draw_level_preview(r: Rect2, id: String) -> void:
+	draw_rect(r, Color("0d1117"))
+	var L: Dictionary = _level_pack() if id == cur_level else levels.get(id, {})
+	var tiles: Dictionary = L.get("tiles", {})
+	if tiles.is_empty():
+		_ctext(ThemeDB.fallback_font, r.position.x + r.size.x * 0.5, r.position.y + r.size.y * 0.55, "(vide)", Color(1, 1, 1, 0.3), 12)
+		return
+	var mx := 16; var my := 10
+	for k in tiles:
+		mx = maxi(mx, k.x + 1); my = maxi(my, k.y + 1)
+	var sc: float = minf((r.size.x - 8.0) / float(mx), (r.size.y - 8.0) / float(my))
+	var ox: float = r.position.x + (r.size.x - mx * sc) * 0.5
+	var oy: float = r.position.y + (r.size.y - my * sc) * 0.5
+	for k in tiles:
+		var col: Color = tmpl.COLORS.get(tiles[k], Color.GRAY)
+		draw_rect(Rect2(ox + k.x * sc, oy + k.y * sc, maxf(sc, 1.5), maxf(sc, 1.5)), col)
 
 
 # ============================================================= SCREENEDIT
