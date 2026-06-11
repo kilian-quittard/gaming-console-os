@@ -8,7 +8,7 @@ const TOPBAR := 52
 const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
 const TEMPLATES := {
-	"2D": [{"id": "platformer", "name": "Plateformer"}, {"id": "topdown", "name": "Vue de dessus"}],
+	"2D": [{"id": "platformer", "name": "Plateformer"}, {"id": "topdown", "name": "Vue de dessus"}, {"id": "metroid", "name": "Metroidvania"}],
 	"3D": []
 }
 const CURSOR_DELAY := 0.25
@@ -24,6 +24,7 @@ const PLATFORMER_PLAY := preload("res://scenes/game/PlatformerPlay.tscn")
 const TEMPLATE_SCENES := {
 	"platformer": preload("res://scenes/game/PlatformerPlay.tscn"),
 	"topdown": preload("res://scenes/game/TopDownPlay.tscn"),
+	"metroid": preload("res://scenes/game/MetroidPlay.tscn"),
 }
 var tmpl_kind := ""
 
@@ -1796,6 +1797,9 @@ func _draw_topbar(vp: Vector2) -> void:
 					_text(f, Vector2(kx + 6, 36), "x%d" % int(tmpl.keys[kcol]), kc, 12)
 				kx += 30.0
 		# PV joueur : cœurs (pleins/vides)
+		var hud_txt: String = tmpl.play_hud_text()
+		if hud_txt != "":
+			_text(f, Vector2(240, 76), hud_txt, Color("9be7ff"), 13)
 		if tmpl.max_hearts > 0:
 			for i in tmpl.max_hearts:
 				var hc := Color("e74c3c") if i < tmpl.hearts else Color(1, 1, 1, 0.18)

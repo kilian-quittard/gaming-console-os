@@ -25,7 +25,8 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FLYER, FISH, SPIKER,
 	CHASER, HOPPER, BOUNCER, SHOOTER,
 	FALLBLOCK, FIREBAR, CRUMBLE,
-	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP }
+	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP,
+	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -45,7 +46,10 @@ const NAMES := {
 	CHASER: "Fantôme", HOPPER: "Sauteur", BOUNCER: "Rebond", SHOOTER: "Tourelle",
 	FALLBLOCK: "Bloc tombant", FIREBAR: "Barre de feu", CRUMBLE: "Plateforme friable",
 	BOSS: "Boss", FLOOR: "Sol", PLATE: "Dalle", PUSHBLOCK: "Bloc poussable",
-	WARP: "Sortie (warp)"
+	WARP: "Sortie (warp)",
+	ITEM_DJUMP: "Double-saut", ITEM_MORPH: "Morph ball", ITEM_MISSILE: "Missiles (+5)",
+	ENERGY: "Réservoir énergie", DOOR_BEAM: "Porte (tir)", DOOR_MISSILE: "Porte (missile)",
+	MORPH_TUBE: "Conduit (morph)"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -65,7 +69,10 @@ const COLORS := {
 	CHASER: Color("ecf0f1"), HOPPER: Color("16a085"), BOUNCER: Color("e84393"), SHOOTER: Color("34495e"),
 	FALLBLOCK: Color("7f8c8d"), FIREBAR: Color("e8521f"), CRUMBLE: Color("b08968"),
 	BOSS: Color("8e1a3d"), FLOOR: Color("6b5d4f"), PLATE: Color("d4a017"), PUSHBLOCK: Color("8d6e63"),
-	WARP: Color("9b59f5")
+	WARP: Color("9b59f5"),
+	ITEM_DJUMP: Color("4cd6b3"), ITEM_MORPH: Color("ffb74d"), ITEM_MISSILE: Color("ff7043"),
+	ENERGY: Color("ff5e8a"), DOOR_BEAM: Color("42a5f5"), DOOR_MISSILE: Color("ef5350"),
+	MORPH_TUBE: Color("78909c")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -168,6 +175,7 @@ func default_hp() -> int: return 0               # PV par défaut (0 = mort inst
 func seed_demo() -> void: pass                   # contenu du nouveau projet
 func wants_room_camera() -> bool: return false   # caméra par salles (top-down)
 func debug_text() -> String: return ""           # texte debug HUD (ex: sonic)
+func play_hud_text() -> String: return ""        # texte HUD en jeu (ex: missiles)
 func jump_pressed() -> void: pass                # entrées transmises par ForgeApp
 func jump_released() -> void: pass
 func _wants_parallax() -> bool: return true      # false = fond plat (top-down)
@@ -353,6 +361,7 @@ func _dir_y() -> int:
 func _is_full_solid(t: int) -> bool:
 	if t == GROUND or t == BREAKABLE or t == DOOR or t == ICE or t == CONV_R or t == CONV_L: return true
 	if t == FALLBLOCK or t == CRUMBLE or t == PUSHBLOCK: return true
+	if t == DOOR_BEAM or t == DOOR_MISSILE or t == MORPH_TUBE: return true
 	return false
 
 
@@ -1437,6 +1446,29 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 		SWITCH:
 			ci.draw_rect(Rect2(p + Vector2(pad, cs * 0.55), Vector2(cs - pad * 2, cs * 0.45 - pad)), col.darkened(0.2))
 			ci.draw_rect(Rect2(p + Vector2(cs * 0.28, cs * 0.35), Vector2(cs * 0.44, cs * 0.22)), col)
+		ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY:
+			# capsule d'objet : socle + orbe colorée qui pulse
+			var icc := p + Vector2(cs * 0.5, cs * 0.55)
+			var it_t: float = float(app.anim_t) if app != null else 0.0
+			ci.draw_rect(Rect2(p + Vector2(cs * 0.3, cs * 0.78), Vector2(cs * 0.4, cs * 0.16)), Color("455a64"))
+			ci.draw_circle(icc, cs * (0.22 + 0.02 * sin(it_t * 4.0)), col)
+			ci.draw_circle(icc + Vector2(-cs * 0.06, -cs * 0.06), cs * 0.07, Color(1, 1, 1, 0.8 * alpha))
+			if t == ENERGY:
+				ci.draw_rect(Rect2(icc - Vector2(cs * 0.05, cs * 0.12), Vector2(cs * 0.1, cs * 0.24)), Color(1, 1, 1, 0.9))
+				ci.draw_rect(Rect2(icc - Vector2(cs * 0.12, cs * 0.05), Vector2(cs * 0.24, cs * 0.1)), Color(1, 1, 1, 0.9))
+		DOOR_BEAM, DOOR_MISSILE:
+			# porte gated : montants + iris coloré (tir ou missile pour ouvrir)
+			ci.draw_rect(Rect2(p, Vector2(cs, cs)), Color("37474f"))
+			ci.draw_rect(Rect2(p + Vector2(cs * 0.18, 0), Vector2(cs * 0.64, cs)), col.darkened(0.35))
+			ci.draw_circle(p + Vector2(cs * 0.5, cs * 0.5), cs * 0.2, col)
+			ci.draw_circle(p + Vector2(cs * 0.5, cs * 0.5), cs * 0.09, col.lightened(0.4))
+		MORPH_TUBE:
+			# conduit : bloc hachuré (passable uniquement en morph ball)
+			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col.darkened(0.4))
+			for i in 4:
+				var hx := cs * (0.1 + i * 0.25)
+				ci.draw_line(p + Vector2(hx, cs * 0.1), p + Vector2(hx + cs * 0.12, cs * 0.9), col.lightened(0.1), 2.0 * scale)
+			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col.darkened(0.55), false, maxf(1.0, scale))
 		WARP:
 			# portail : double anneau + tourbillon
 			var wc := p + Vector2(cs, cs) * 0.5
