@@ -177,6 +177,10 @@ var cur_room := -1               # salle courante (le joueur dedans)
 # les autres sont rangés (format natif) dans levels[id].
 var levels := {}                 # id (String) -> niveau rangé (format natif)
 var cur_level := "1"
+var cur_level_name := ""         # nom de la ZONE active ("Cavernes"...)
+var lvl_rename := false          # saisie du nom de zone en cours
+var map_open := false            # minimap affichée (en test)
+var visited_rooms := {}          # "niveau:salle" -> true (brouillard de la minimap, par run)
 var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
 var play_backup := {}            # id -> état AUTEUR des niveaux visités pendant le test
                                  # (le jeu mute la grille : pièces/objets pris, portes ouvertes ;
@@ -323,6 +327,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if screen == "template":   _tmpl_input(e); return
 	if screen == "gamedash":   _gamedash_input(e); return
 	if screen == "screenedit": _screenedit_input(e); return
+	if lvl_rename: _rename_input(e); return
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
 	if bg_edit:    bg_ed.input(e); return
@@ -437,10 +442,13 @@ func _play_input(e: InputEvent) -> void:
 		tmpl.jump_released()
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_B]):
 		_stop_play()
+	elif _press(e, [KEY_M], [JOY_BUTTON_BACK]):
+		map_open = not map_open; queue_redraw()
 	elif _press(e, [KEY_R], [JOY_BUTTON_Y]):
 		# rejouer = nouvelle partie : restaure l'état auteur puis re-snapshot
 		_restore_play_world()
 		_backup_level_for_play(cur_level)
+		visited_rooms.clear()
 		tmpl.start_play(tmpl.last_from_cursor)
 
 
@@ -448,8 +456,8 @@ func _play_input(e: InputEvent) -> void:
 func _dash_entries() -> Array:
 	var out := []
 	for id in level_ids():
-		out.append({"label": "Niveau %s" % id, "key": "level", "id": id})
-	out.append({"label": "+ Nouveau niveau", "key": "newlevel"})
+		out.append({"label": level_name(id), "key": "level", "id": id})
+	out.append({"label": "+ Nouvelle zone", "key": "newlevel"})
 	for i in range(1, DASH_KEYS.size()):
 		out.append({"label": DASH_ITEMS[i], "key": DASH_KEYS[i]})
 	return out
@@ -481,6 +489,22 @@ func _gamedash_input(e: InputEvent) -> void:
 			_:
 				edit_screen_key = str(ent["key"]); edit_prop_sel = 0; text_edit_mode = false
 				states.change_state("ScreenEditState")
+
+
+func _rename_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed:
+		var k := e as InputEventKey
+		if k.keycode == KEY_ENTER or k.keycode == KEY_ESCAPE:
+			lvl_rename = false; queue_redraw(); return
+		if k.keycode == KEY_BACKSPACE:
+			cur_level_name = cur_level_name.substr(0, maxi(0, cur_level_name.length() - 1))
+			queue_redraw(); return
+		var ch := char(k.unicode)
+		if k.unicode > 31 and cur_level_name.length() < 18:
+			cur_level_name += ch
+			queue_redraw()
+	elif _press(e, [], [JOY_BUTTON_B, JOY_BUTTON_START, JOY_BUTTON_A]):
+		lvl_rename = false; queue_redraw()
 
 
 func _cur_screen() -> Dictionary:
@@ -843,9 +867,10 @@ func _menu_def_build() -> Array:
 				cam_init = false
 				_set_toast("Caméra : %s" % ("libre" if was else "salles (verrou)"))},
 		{"label": "Éditer les salles… (%d)" % rooms.size(), "modal": true, "act": room_ed.open},
-		{"label": "Niveau: %s / %d  (suivant)" % [cur_level, level_ids().size()], "act": _cycle_level},
-		{"label": "Nouveau niveau", "act": _add_level},
-		{"label": "Supprimer ce niveau", "act": _delete_level},
+		{"label": "Zone: %s / %d  (suivante)" % [level_name(cur_level), level_ids().size()], "act": _cycle_level},
+		{"label": "Renommer la zone…", "modal": true, "act": func() -> void: lvl_rename = true},
+		{"label": "Nouvelle zone", "act": _add_level},
+		{"label": "Supprimer cette zone", "act": _delete_level},
 		{"label": "Musique: %s" % _onoff(audio.music_on), "act": _toggle_music},
 		{"label": "FPS (debug): %s" % _onoff(show_fps), "act": func() -> void:
 			show_fps = not show_fps
@@ -1114,7 +1139,7 @@ func _new_project(template_id: String) -> void:
 
 
 func _parse_level(ld: Dictionary) -> Dictionary:
-	var L := {"cols": int(ld.get("cols", LEVEL_COLS_DEF)),
+	var L := {"name": str(ld.get("name", "")), "cols": int(ld.get("cols", LEVEL_COLS_DEF)),
 		"bg": int(ld.get("bg", 0)) % BG_THEMES.size(),
 		"tiles": {}, "cfg": {}, "bg_deco": ld.get("bg_deco", []), "rooms": []}
 	for k in ld.get("tiles", {}):
@@ -1184,7 +1209,7 @@ func _open_project(p: Dictionary) -> void:
 
 
 func _serialize_level(L: Dictionary) -> Dictionary:
-	var out := {"cols": int(L.get("cols", LEVEL_COLS_DEF)), "bg": int(L.get("bg", 0)),
+	var out := {"name": str(L.get("name", "")), "cols": int(L.get("cols", LEVEL_COLS_DEF)), "bg": int(L.get("bg", 0)),
 		"tiles": {}, "cfg": {}, "bg_deco": L.get("bg_deco", []),
 		"rooms": (L.get("rooms", []) as Array).map(func(r): return [r.position.x, r.position.y, r.size.x, r.size.y])}
 	for k in L.get("tiles", {}):
@@ -1495,6 +1520,11 @@ func _update_fx(delta: float) -> void:
 
 # ============================================================= PLAY (délégué au template)
 # =============================================== MULTI-NIVEAUX (zones reliées)
+func level_name(id: String) -> String:
+	var nm := cur_level_name if id == cur_level else str((levels.get(id, {}) as Dictionary).get("name", ""))
+	return nm if nm != "" else "Zone %s" % id
+
+
 func _backup_level_for_play(id: String) -> void:
 	if play_backup.has(id): return
 	if id == cur_level:
@@ -1519,12 +1549,13 @@ func level_ids() -> Array:
 
 
 func _level_pack() -> Dictionary:
-	return {"cols": cols, "bg": bg_theme, "tiles": grid.duplicate(),
+	return {"name": cur_level_name, "cols": cols, "bg": bg_theme, "tiles": grid.duplicate(),
 		"cfg": cell_cfg.duplicate(true), "bg_deco": bg_deco.duplicate(true),
 		"rooms": rooms.duplicate()}
 
 
 func _level_unpack(L: Dictionary) -> void:
+	cur_level_name = str(L.get("name", ""))
 	cols = int(L.get("cols", LEVEL_COLS_DEF))
 	bg_theme = int(L.get("bg", 0)) % BG_THEMES.size()
 	grid = L.get("tiles", {})
@@ -1557,7 +1588,8 @@ func _add_level() -> void:
 	undo_stack.clear(); redo_stack.clear()
 	tmpl.seed_demo()
 	_auto_resize_cols()
-	_set_toast("Niveau %s créé" % cur_level)
+	cur_level_name = "Zone %s" % cur_level
+	_set_toast("Zone créée : %s" % cur_level_name)
 	queue_redraw(); _redraw_world()
 
 
@@ -1579,7 +1611,7 @@ func _cycle_level() -> void:
 		_set_toast("Un seul niveau (Nouveau niveau pour en ajouter)"); return
 	var i := ids.find(cur_level)
 	_switch_level(str(ids[(i + 1) % ids.size()]))
-	_set_toast("Niveau %s" % cur_level)
+	_set_toast(level_name(cur_level))
 
 
 # warp en PLAY : touche une tuile Sortie → bascule de niveau + spawn à la porte cible
@@ -1604,6 +1636,7 @@ func _warp_play(c: Vector2i) -> void:
 	tmpl.respawn_cell = arrival
 	warp_cd = 1.0
 	cam_init = false; cur_room = -1
+	_set_toast("→ %s" % level_name(cur_level))
 	_play("key")
 	queue_redraw(); _redraw_world()
 
@@ -1611,6 +1644,7 @@ func _warp_play(c: Vector2i) -> void:
 func _start_play(from_cursor: bool) -> void:
 	_restore_play_world()                 # mutations d'un test précédent → état auteur
 	_backup_level_for_play(cur_level)     # snapshot du niveau de départ
+	visited_rooms.clear(); map_open = false
 	tmpl.start_play(from_cursor)
 	mode = "play"
 	cam_init = false; cur_room = -1   # snap caméra (salle ou suivi) au démarrage du test
@@ -1641,7 +1675,9 @@ func _compute_room_view(area: Rect2) -> void:
 	var pcell := Vector2i(int(pc.x / CELL), int(pc.y / CELL))
 	for i in rooms.size():
 		if (rooms[i] as Rect2i).has_point(pcell):
-			cur_room = i; break
+			cur_room = i
+			visited_rooms["%s:%d" % [cur_level, i]] = true
+			break
 	var sc: float = area.size.y / (ROOM_VIEW_H * CELL)   # zoom fixe (identique partout)
 	var target := area.position + area.size * 0.5 - pc * sc   # centré sur le joueur
 	if cur_room >= 0 and cur_room < rooms.size():
@@ -1730,6 +1766,8 @@ func _draw() -> void:
 		var txt := "%d FPS" % fps
 		draw_rect(Rect2(Vector2(vp.x - 86, TOPBAR + 6), Vector2(76, 22)), Color(0, 0, 0, 0.55))
 		_text(ThemeDB.fallback_font, Vector2(vp.x - 78, TOPBAR + 22), txt, fcol, 14)
+	if mode == "play" and map_open: _draw_minimap(vp)
+	if lvl_rename: _draw_rename(vp)
 	gfx.draw_transition(vp)   # wipe de transition de style (au-dessus de tout)
 
 
@@ -2063,6 +2101,55 @@ func _draw_gamedash(vp: Vector2) -> void:
 
 
 # mini-aperçu d'un niveau (carte du dash) : chaque tuile = un pixel coloré
+# minimap (test) : salles VISITÉES de la zone courante + position du joueur
+func _draw_minimap(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	var panel := Rect2(vp * 0.5 - Vector2(vp.x * 0.32, vp.y * 0.32), Vector2(vp.x * 0.64, vp.y * 0.64))
+	draw_rect(panel, Color(8.0 / 255, 12.0 / 255, 18.0 / 255, 0.93))
+	draw_rect(panel, UI_ACCENT, false, 2.0)
+	_ctext(f, panel.position.x + panel.size.x * 0.5, panel.position.y + 26, level_name(cur_level).to_upper(), Color.WHITE, 18)
+	var inner := Rect2(panel.position + Vector2(20, 40), panel.size - Vector2(40, 78))
+	# bornes en cases : union des salles, sinon le niveau entier
+	var bx0 := 999999; var by0 := 999999; var bx1 := 0; var by1 := 0
+	for r in rooms:
+		bx0 = mini(bx0, r.position.x); by0 = mini(by0, r.position.y)
+		bx1 = maxi(bx1, r.position.x + r.size.x); by1 = maxi(by1, r.position.y + r.size.y)
+	if rooms.is_empty():
+		bx0 = 0; by0 = 0; bx1 = cols; by1 = rows
+	var sc: float = minf(inner.size.x / float(bx1 - bx0), inner.size.y / float(by1 - by0))
+	var ox: float = inner.position.x + (inner.size.x - float(bx1 - bx0) * sc) * 0.5
+	var oy: float = inner.position.y + (inner.size.y - float(by1 - by0) * sc) * 0.5
+	if rooms.is_empty():
+		draw_rect(Rect2(ox, oy, float(bx1 - bx0) * sc, float(by1 - by0) * sc), Color(0.25, 0.55, 0.9, 0.18))
+	for i in rooms.size():
+		var r: Rect2i = rooms[i]
+		var rr := Rect2(ox + float(r.position.x - bx0) * sc, oy + float(r.position.y - by0) * sc,
+			float(r.size.x) * sc, float(r.size.y) * sc)
+		var seen: bool = visited_rooms.has("%s:%d" % [cur_level, i])
+		if not seen:
+			continue   # brouillard : salle jamais visitée = cachée
+		draw_rect(rr, Color(0.25, 0.55, 0.9, 0.30) if i != cur_room else Color(0.4, 0.75, 1.0, 0.45))
+		draw_rect(rr, Color(0.55, 0.8, 1.0, 0.9), false, 1.5)
+	# joueur
+	var pcell: Vector2 = (tmpl.ppos + tmpl.PSIZE * 0.5) / float(tmpl.CELL)
+	var pdot := Vector2(ox + (pcell.x - bx0) * sc, oy + (pcell.y - by0) * sc)
+	draw_circle(pdot, 4.0, Color("ffde59"))
+	draw_circle(pdot, 4.0, Color("2c3e50"), false, 1.0)
+	_ctext(f, panel.position.x + panel.size.x * 0.5, panel.end.y - 14, "Select / M : fermer", Color(1, 1, 1, 0.45), 12)
+
+
+# overlay de saisie du nom de zone (clavier)
+func _draw_rename(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	var box := Rect2(vp * 0.5 - Vector2(220, 50), Vector2(440, 100))
+	draw_rect(box, Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.96))
+	draw_rect(box, UI_ACCENT, false, 2.0)
+	_ctext(f, vp.x * 0.5, box.position.y + 30, "NOM DE LA ZONE", Color(1, 1, 1, 0.7), 13)
+	var nm := cur_level_name if cur_level_name != "" else " "
+	_ctext(f, vp.x * 0.5, box.position.y + 62, nm + "_", Color.WHITE, 20)
+	_ctext(f, vp.x * 0.5, box.end.y - 12, "Tape au clavier · Entrée pour valider", Color(1, 1, 1, 0.4), 11)
+
+
 func _draw_level_preview(r: Rect2, id: String) -> void:
 	draw_rect(r, Color("0d1117"))
 	var L: Dictionary = _level_pack() if id == cur_level else levels.get(id, {})
