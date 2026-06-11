@@ -178,6 +178,10 @@ var cur_room := -1               # salle courante (le joueur dedans)
 var levels := {}                 # id (String) -> niveau rangé (format natif)
 var cur_level := "1"
 var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
+var play_backup := {}            # id -> état AUTEUR des niveaux visités pendant le test
+                                 # (le jeu mute la grille : pièces/objets pris, portes ouvertes ;
+                                 #  restauré en sortant du test ou en relançant — mais PAS au
+                                 #  retour dans une zone pendant la même partie)
 var room_edit := false           # mode édition des salles
 var room_ed: RoomEditor = null   # module d'édition des salles
 
@@ -434,6 +438,9 @@ func _play_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_B]):
 		_stop_play()
 	elif _press(e, [KEY_R], [JOY_BUTTON_Y]):
+		# rejouer = nouvelle partie : restaure l'état auteur puis re-snapshot
+		_restore_play_world()
+		_backup_level_for_play(cur_level)
 		tmpl.start_play(tmpl.last_from_cursor)
 
 
@@ -1488,6 +1495,22 @@ func _update_fx(delta: float) -> void:
 
 # ============================================================= PLAY (délégué au template)
 # =============================================== MULTI-NIVEAUX (zones reliées)
+func _backup_level_for_play(id: String) -> void:
+	if play_backup.has(id): return
+	if id == cur_level:
+		play_backup[id] = _level_pack()
+	elif levels.has(id):
+		play_backup[id] = (levels[id] as Dictionary).duplicate(true)
+
+
+func _restore_play_world() -> void:
+	for id in play_backup:
+		if id == cur_level:
+			_level_unpack((play_backup[id] as Dictionary).duplicate(true))
+		else:
+			levels[id] = (play_backup[id] as Dictionary).duplicate(true)
+	play_backup.clear()
+
 func level_ids() -> Array:
 	var ids := levels.keys()
 	if not ids.has(cur_level): ids.append(cur_level)
@@ -1516,6 +1539,7 @@ func _level_unpack(L: Dictionary) -> void:
 
 func _switch_level(id: String) -> void:
 	if id == cur_level or not levels.has(id): return
+	if mode == "play": _backup_level_for_play(id)
 	levels[cur_level] = _level_pack()
 	cur_level = id
 	_level_unpack(levels[id])
@@ -1585,6 +1609,8 @@ func _warp_play(c: Vector2i) -> void:
 
 
 func _start_play(from_cursor: bool) -> void:
+	_restore_play_world()                 # mutations d'un test précédent → état auteur
+	_backup_level_for_play(cur_level)     # snapshot du niveau de départ
 	tmpl.start_play(from_cursor)
 	mode = "play"
 	cam_init = false; cur_room = -1   # snap caméra (salle ou suivi) au démarrage du test
@@ -1594,6 +1620,7 @@ func _start_play(from_cursor: bool) -> void:
 func _stop_play() -> void:
 	mode = "edit"
 	tmpl.stop_play()
+	_restore_play_world()                 # l'éditeur retrouve l'état auteur
 	queue_redraw(); _redraw_world()
 
 
