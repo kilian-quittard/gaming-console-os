@@ -23,6 +23,7 @@ var planets3 := []          # {c: Vector3 centre, r: float} — champs de gravit
 var on_planet = null        # planète sur laquelle on marche (null = gravité normale)
 var pl_head := Vector3.FORWARD   # cap tangent (avant) en mode planète
 var look_dx := 0.0          # delta souris accumulé (appliqué selon le mode)
+var g_up := Vector3.UP      # "haut" LISSÉ (caméra/perso) — interpole entre les champs
 var lock_coord := 0.0       # coordonnée verrouillée en 2.5D (z ou x, en unités)
 var enemies3 := []          # {node, x, z, dir, min, max}
 var world3: Node3D = null
@@ -261,6 +262,7 @@ func _cell_h(c: Vector2i) -> float:
 	if t == EMPTY: return -1000.0
 	if t == GROUND:
 		return float(app.cell_cfg.get(c, {}).get("h", 1))
+	if t == PLANET: return -1000.0   # la planète flotte : la case est du VIDE
 	return float(app.cell_cfg.get(c, {}).get("base_h", 0))   # objet : hauteur du bloc dessous
 
 
@@ -279,6 +281,22 @@ func _build_world() -> void:
 		if t == GROUND:
 			var h := _cell_h(k)
 			nodes.append(_box(Vector3(U, h, U), Vector3(cx, h * 0.5, cz), Color("8d6e63")))
+		elif t == PLANET:
+			var pr := float(app.cell_cfg.get(k, {}).get("r", 3))
+			var pc := Vector3(cx, pr + 1.0, cz)
+			var sm := SphereMesh.new(); sm.radius = pr; sm.height = pr * 2.0
+			var pmi := MeshInstance3D.new(); pmi.mesh = sm
+			pmi.material_override = _mat(Color("5c9ded"))
+			pmi.position = pc
+			world3.add_child(pmi)
+			nodes.append(pmi)
+			var band := MeshInstance3D.new()
+			var tm := TorusMesh.new(); tm.inner_radius = pr * 1.04; tm.outer_radius = pr * 1.1
+			band.mesh = tm; band.position = pc
+			band.material_override = _mat(Color("8fc2ff"), 0.8)
+			world3.add_child(band)
+			nodes.append(band)
+			planets3.append({"c": pc, "r": pr})
 		else:
 			# support : bloc (objet posé dessus) OU dalle de sol
 			var bh := float(app.cell_cfg.get(k, {}).get("base_h", 0))
@@ -288,22 +306,6 @@ func _build_world() -> void:
 				var slab_c := (Color("a8b0b8") if (k.x + k.y) % 2 == 0 else Color("939ba3")) 					if t == FLOOR else col.lerp(Color("9e9e9e"), 0.4)
 				nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), slab_c))
 			match t:
-				PLANET:
-					var pr := float(app.cell_cfg.get(k, {}).get("r", 3))
-					var pc := Vector3(cx, pr + 1.0, cz)
-					var sm := SphereMesh.new(); sm.radius = pr; sm.height = pr * 2.0
-					var pmi := MeshInstance3D.new(); pmi.mesh = sm
-					pmi.material_override = _mat(Color("5c9ded"))
-					pmi.position = pc
-					world3.add_child(pmi)
-					nodes.append(pmi)
-					var band := MeshInstance3D.new()
-					var tm := TorusMesh.new(); tm.inner_radius = pr * 1.04; tm.outer_radius = pr * 1.1
-					band.mesh = tm; band.position = pc
-					band.material_override = _mat(Color("8fc2ff"), 0.8)
-					world3.add_child(band)
-					nodes.append(band)
-					planets3.append({"c": pc, "r": pr})
 				COIN:
 					var cn := _box_glow(Vector3(0.36, 0.36, 0.08), Vector3(cx, bh + 0.5, cz), Color("f1c40f"), 1.6)
 					coin_nodes.append(cn); nodes.append(cn)
@@ -503,6 +505,7 @@ func _physics_process(delta: float) -> void:
 	_sweep_removed_meshes()
 	_update_enemies3(delta)
 	# rendu (et retour à la verticale en douceur après une planète)
+	g_up = g_up.slerp(Vector3.UP, clampf(6.0 * delta, 0.0, 1.0)).normalized()
 	player3.position = pos3 + Vector3(0, 0.15, 0)
 	player3.basis = player3.basis.slerp(Basis.IDENTITY, clampf(8.0 * delta, 0.0, 1.0))
 	_update_camera(delta)
@@ -527,16 +530,35 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 			if sup > -100.0 and (pos3.y - sup) * 0.85 < bs:
 				pl = null   # le sol normal est plus proche → gravité normale
 	if pl == null: return false
-	var up: Vector3 = (pos3 - pl.c).normalized()
+	# contrainte 2.5D : tout se passe dans le plan de la voie verrouillée
+	var locked := move_mode != "3d"
+	if locked:
+		if move_mode == "x": pos3.z = lock_coord
+		else: pos3.x = lock_coord
+	var up: Vector3 = (pos3 - pl.c)
+	if locked:
+		if move_mode == "x": up.z = 0.0
+		else: up.x = 0.0
+	up = up.normalized()
 	if on_planet != null:
 		# === collé à la surface : on marche AUTOUR de la sphère ===
-		pl_head = (pl_head - up * pl_head.dot(up)).normalized()
-		pl_head = pl_head.rotated(up, -yaw_in)
-		var right: Vector3 = pl_head.cross(up)
-		var mv: Vector3 = pl_head * (-float(_dir_y())) + right * float(_dir_x())
+		var mv := Vector3.ZERO
+		if locked:
+			# anneau 2.5D : gauche/droite = tourner autour, dans le plan
+			var tang := Vector3(up.y, -up.x, 0.0) if move_mode == "x" else Vector3(0.0, -up.z, up.y)
+			mv = tang * float(_dir_x())
+			pl_head = tang * (1.0 if _dir_x() >= 0 else -1.0)
+		else:
+			pl_head = (pl_head - up * pl_head.dot(up)).normalized()
+			pl_head = pl_head.rotated(up, -yaw_in)
+			var right: Vector3 = pl_head.cross(up)
+			mv = pl_head * (-float(_dir_y())) + right * float(_dir_x())
 		if mv.length() > 0.1:
 			pos3 += mv.normalized() * SPEED3 * delta
 		pos3 = pl.c + (pos3 - pl.c).normalized() * (pl.r + 0.45)
+		if locked:
+			if move_mode == "x": pos3.z = lock_coord
+			else: pos3.x = lock_coord
 		up = (pos3 - pl.c).normalized()
 		grounded3 = true
 		if jb3 > 0.0:
@@ -547,6 +569,9 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 	else:
 		# === en l'air dans le champ : chute vers le centre ===
 		vel3 += -up * GRAV3 * 0.9 * delta
+		if locked:
+			if move_mode == "x": vel3.z = 0.0
+			else: vel3.x = 0.0
 		pos3 += vel3 * delta
 		var d2: float = (pos3 - pl.c).length()
 		if d2 <= pl.r + 0.45 and vel3.dot(up) <= 0.0:
@@ -554,20 +579,26 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 			on_planet = pl
 			grounded3 = true
 			vel3 = Vector3.ZERO
-			# cap initial = tangent de la vitesse d'approche (sinon garde l'ancien)
 			var t := (pl_head - up * pl_head.dot(up))
 			pl_head = t.normalized() if t.length() > 0.05 else Vector3.FORWARD.cross(up).cross(up) * -1.0
 			app._play("stomp")
 		if pos3.y < -6.0:
 			_kill(); return true
-	# caméra : derrière le cap, "haut" = haut local (LE truc Galaxy)
-	var ct: Vector3 = pos3 + up * 2.6 - pl_head * 6.0
+	# haut LISSÉ : la caméra et le perso tournent en douceur entre les champs
+	g_up = g_up.slerp(up, clampf(6.0 * delta, 0.0, 1.0)).normalized()
+	var ct: Vector3
+	if locked:
+		# caméra 2.5D : de côté, elle ROULE avec le haut local (Galaxy 2.5D)
+		if move_mode == "x": ct = Vector3(pos3.x, pos3.y, lock_coord + 9.0)
+		else: ct = Vector3(lock_coord + 9.0, pos3.y, pos3.z)
+	else:
+		ct = pos3 + g_up * 2.6 - pl_head * 6.0
 	cam3.position = cam3.position.lerp(ct, clampf(7.0 * delta, 0.0, 1.0))
-	cam3.look_at(pos3 + up * 0.8, up)
+	cam3.look_at(pos3 + g_up * 0.8, g_up)
 	# le PERSO s'oriente selon la surface : pieds vers le centre, face au cap
-	var fwd_o := (pl_head - up * pl_head.dot(up))
+	var fwd_o := (pl_head - g_up * pl_head.dot(g_up))
 	if fwd_o.length() > 0.05:
-		var tb := Basis.looking_at(fwd_o.normalized(), up)
+		var tb := Basis.looking_at(fwd_o.normalized(), g_up)
 		player3.basis = player3.basis.slerp(tb.orthonormalized(), clampf(12.0 * delta, 0.0, 1.0))
 	# interactions/rendu communs
 	player3.position = pos3 + up * 0.15
@@ -611,7 +642,7 @@ func _update_camera(delta: float) -> void:
 			var off := Vector3(sin(cam_yaw), 0.0, cos(cam_yaw))
 			target = pos3 + off * 6.0 + Vector3(0, 3.0, 0)
 	cam3.position = cam3.position.lerp(target, clampf(7.0 * delta, 0.0, 1.0))
-	cam3.look_at(pos3 + Vector3(0, 1.0, 0))
+	cam3.look_at(pos3 + Vector3(0, 1.0, 0), g_up)
 
 
 func _update_enemies3(delta: float) -> void:
