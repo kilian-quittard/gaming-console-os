@@ -19,6 +19,10 @@ var grounded3 := false
 var jb3 := 0.0              # jump buffer
 var move_mode := "3d"       # "3d" | "x" (2.5D le long de X) | "z"
 var cam_yaw := 0.0          # cap caméra third-person (mode 3D)
+var planets3 := []          # {c: Vector3 centre, r: float} — champs de gravité radiaux
+var on_planet = null        # planète sur laquelle on marche (null = gravité normale)
+var pl_head := Vector3.FORWARD   # cap tangent (avant) en mode planète
+var look_dx := 0.0          # delta souris accumulé (appliqué selon le mode)
 var lock_coord := 0.0       # coordonnée verrouillée en 2.5D (z ou x, en unités)
 var enemies3 := []          # {node, x, z, dir, min, max}
 var world3: Node3D = null
@@ -37,7 +41,7 @@ var _focus_init := false
 const P3_CATS := [
 	{"name": "Sol",     "tiles": [FLOOR]},
 	{"name": "Blocs",   "tiles": [GROUND]},
-	{"name": "Mode",    "tiles": [MODE25, MODE3D]},
+	{"name": "Mode",    "tiles": [MODE25, MODE3D, PLANET]},
 	{"name": "Items",   "tiles": [COIN]},
 	{"name": "Danger",  "tiles": [SPIKE]},
 	{"name": "Ennemis", "tiles": [ENEMY]},
@@ -135,6 +139,8 @@ func config_fields(t: int) -> Array:
 		return [{"key": "h", "label": "Hauteur", "opts": [1, 2, 3], "def": 1}]
 	if t == MODE25:
 		return [{"key": "axe", "label": "Axe", "opts": ["X", "Z"], "def": "X"}]
+	if t == PLANET:
+		return [{"key": "r", "label": "Rayon", "opts": [2, 3, 4], "def": 3}]
 	return super(t)
 
 
@@ -261,7 +267,7 @@ func _cell_h(c: Vector2i) -> float:
 func _build_world() -> void:
 	for k in mesh_by_cell:
 		for n in mesh_by_cell[k]: n.queue_free()
-	mesh_by_cell.clear(); coin_nodes.clear()
+	mesh_by_cell.clear(); coin_nodes.clear(); planets3.clear()
 	for en in enemies3: en.node.queue_free()
 	enemies3.clear()
 	for k in app.grid:
@@ -282,6 +288,22 @@ func _build_world() -> void:
 				var slab_c := (Color("a8b0b8") if (k.x + k.y) % 2 == 0 else Color("939ba3")) 					if t == FLOOR else col.lerp(Color("9e9e9e"), 0.4)
 				nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), slab_c))
 			match t:
+				PLANET:
+					var pr := float(app.cell_cfg.get(k, {}).get("r", 3))
+					var pc := Vector3(cx, pr + 1.0, cz)
+					var sm := SphereMesh.new(); sm.radius = pr; sm.height = pr * 2.0
+					var pmi := MeshInstance3D.new(); pmi.mesh = sm
+					pmi.material_override = _mat(Color("5c9ded"))
+					pmi.position = pc
+					world3.add_child(pmi)
+					nodes.append(pmi)
+					var band := MeshInstance3D.new()
+					var tm := TorusMesh.new(); tm.inner_radius = pr * 1.04; tm.outer_radius = pr * 1.1
+					band.mesh = tm; band.position = pc
+					band.material_override = _mat(Color("8fc2ff"), 0.8)
+					world3.add_child(band)
+					nodes.append(band)
+					planets3.append({"c": pc, "r": pr})
 				COIN:
 					var cn := _box_glow(Vector3(0.36, 0.36, 0.08), Vector3(cx, bh + 0.5, cz), Color("f1c40f"), 1.6)
 					coin_nodes.append(cn); nodes.append(cn)
@@ -331,8 +353,8 @@ func jump_pressed() -> void:
 
 func _unhandled_input(e: InputEvent) -> void:
 	if app == null or app.screen != "edit" or app.mode != "play": return
-	if move_mode == "3d" and e is InputEventMouseMotion 			and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		cam_yaw -= (e as InputEventMouseMotion).relative.x * 0.0045
+	if e is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		look_dx += (e as InputEventMouseMotion).relative.x
 
 
 func _process(delta: float) -> void:
@@ -413,11 +435,16 @@ func _physics_process(delta: float) -> void:
 		return
 	jb3 -= delta
 	_tick_player_timers(delta)
-	# caméra (mode 3D) : stick droit = rotation ; souris via _unhandled_input
+	# rotation caméra : souris (accumulée) + stick droit — axe selon le mode
+	var yaw_in := look_dx * 0.0045
+	look_dx = 0.0
+	var rs := Input.get_joy_axis(0, JOY_AXIS_RIGHT_X)
+	if absf(rs) > 0.18: yaw_in += rs * 2.8 * delta
+	# === GRAVITÉ RADIALE (planètes, façon Mario Galaxy) ===
+	if _planet_step(delta, yaw_in):
+		return
 	if move_mode == "3d":
-		var rs := Input.get_joy_axis(0, JOY_AXIS_RIGHT_X)
-		if absf(rs) > 0.18:
-			cam_yaw -= rs * 2.8 * delta
+		cam_yaw -= yaw_in
 	# changement de mode : tuile sous les pieds
 	var here := Vector2i(int(pos3.x), int(pos3.z))
 	match int(app.grid.get(here, EMPTY)):
@@ -481,6 +508,62 @@ func _physics_process(delta: float) -> void:
 	for cn in coin_nodes:
 		if is_instance_valid(cn): cn.rotate_y(delta * 3.0)
 	app.queue_redraw()
+
+
+# pas de simulation en gravité radiale. true = géré (saute la physique normale).
+func _planet_step(delta: float, yaw_in: float) -> bool:
+	# planète d'influence la plus proche
+	var pl = null; var bd := 1e9
+	for p in planets3:
+		var d: float = (pos3 - p.c).length()
+		if d < p.r + 6.0 and d < bd: bd = d; pl = p
+	if on_planet != null: pl = on_planet
+	if pl == null: return false
+	var up: Vector3 = (pos3 - pl.c).normalized()
+	if on_planet != null:
+		# === collé à la surface : on marche AUTOUR de la sphère ===
+		pl_head = (pl_head - up * pl_head.dot(up)).normalized()
+		pl_head = pl_head.rotated(up, -yaw_in)
+		var right: Vector3 = pl_head.cross(up)
+		var mv: Vector3 = pl_head * (-float(_dir_y())) + right * float(_dir_x())
+		if mv.length() > 0.1:
+			pos3 += mv.normalized() * SPEED3 * delta
+		pos3 = pl.c + (pos3 - pl.c).normalized() * (pl.r + 0.45)
+		up = (pos3 - pl.c).normalized()
+		grounded3 = true
+		if jb3 > 0.0:
+			jb3 = 0.0
+			vel3 = up * JUMP3 + (mv.normalized() * SPEED3 if mv.length() > 0.1 else Vector3.ZERO)
+			on_planet = null; grounded3 = false
+			app._play("jump")
+	else:
+		# === en l'air dans le champ : chute vers le centre ===
+		vel3 += -up * GRAV3 * 0.9 * delta
+		pos3 += vel3 * delta
+		var d2: float = (pos3 - pl.c).length()
+		if d2 <= pl.r + 0.45 and vel3.dot(up) <= 0.0:
+			pos3 = pl.c + (pos3 - pl.c).normalized() * (pl.r + 0.45)
+			on_planet = pl
+			grounded3 = true
+			vel3 = Vector3.ZERO
+			# cap initial = tangent de la vitesse d'approche (sinon garde l'ancien)
+			var t := (pl_head - up * pl_head.dot(up))
+			pl_head = t.normalized() if t.length() > 0.05 else Vector3.FORWARD.cross(up).cross(up) * -1.0
+			app._play("stomp")
+		if pos3.y < -6.0:
+			_kill(); return true
+	# caméra : derrière le cap, "haut" = haut local (LE truc Galaxy)
+	var ct: Vector3 = pos3 + up * 2.6 - pl_head * 6.0
+	cam3.position = cam3.position.lerp(ct, clampf(7.0 * delta, 0.0, 1.0))
+	cam3.look_at(pos3 + up * 0.8, up)
+	# interactions/rendu communs
+	player3.position = pos3 + up * 0.15
+	ppos = Vector2(pos3.x * CELL - PSIZE.x * 0.5, pos3.z * CELL - PSIZE.y * 0.5)
+	_sweep_removed_meshes()
+	for cn in coin_nodes:
+		if is_instance_valid(cn): cn.rotate_y(delta * 3.0)
+	app.queue_redraw()
+	return true
 
 
 func _support() -> float:

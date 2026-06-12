@@ -27,7 +27,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FALLBLOCK, FIREBAR, CRUMBLE,
 	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP,
 	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE,
-	MODE25, MODE3D }
+	MODE25, MODE3D, PLANET }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -51,7 +51,7 @@ const NAMES := {
 	ITEM_DJUMP: "Double-saut", ITEM_MORPH: "Morph ball", ITEM_MISSILE: "Missiles (+5)",
 	ENERGY: "Réservoir énergie", DOOR_BEAM: "Porte (tir)", DOOR_MISSILE: "Porte (missile)",
 	MORPH_TUBE: "Conduit (morph)",
-	MODE25: "Zone 2.5D", MODE3D: "Zone 3D"
+	MODE25: "Zone 2.5D", MODE3D: "Zone 3D", PLANET: "Planète (gravité)"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -75,7 +75,7 @@ const COLORS := {
 	ITEM_DJUMP: Color("4cd6b3"), ITEM_MORPH: Color("ffb74d"), ITEM_MISSILE: Color("ff7043"),
 	ENERGY: Color("ff5e8a"), DOOR_BEAM: Color("42a5f5"), DOOR_MISSILE: Color("ef5350"),
 	MORPH_TUBE: Color("78909c"),
-	MODE25: Color("26c6da"), MODE3D: Color("ab47bc")
+	MODE25: Color("26c6da"), MODE3D: Color("ab47bc"), PLANET: Color("5c9ded")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -1496,6 +1496,12 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			else:
 				ci.draw_line(mc - Vector2(cs * 0.24, 0), mc + Vector2(cs * 0.24, 0), col.lightened(0.3), 3.0 * scale)
 				ci.draw_line(mc - Vector2(0, cs * 0.24), mc + Vector2(0, cs * 0.24), col.lightened(0.3), 3.0 * scale)
+		PLANET:
+			# planète (vue de dessus) : disque + anneau d'influence
+			var plc := p + Vector2(cs, cs) * 0.5
+			ci.draw_circle(plc, cs * 0.34, col)
+			ci.draw_circle(plc + Vector2(-cs * 0.1, -cs * 0.1), cs * 0.1, col.lightened(0.3))
+			ci.draw_arc(plc, cs * 0.46, 0, TAU, 24, col.lightened(0.2), 1.5 * scale)
 		WARP:
 			# portail : double anneau + tourbillon
 			var wc := p + Vector2(cs, cs) * 0.5
