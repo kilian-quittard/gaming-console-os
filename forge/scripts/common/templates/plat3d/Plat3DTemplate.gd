@@ -285,17 +285,25 @@ func start_play(from_cursor: bool) -> void:
 	pos3 = Vector3(float(spawn_cell.x) + 0.5, 0.6, float(spawn_cell.y) + 0.5)
 	vel3 = Vector3.ZERO
 	move_mode = "3d"; jb3 = 0.0; cam_yaw = 0.0
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED   # souris = caméra (relâchée au stop)
 	cam3.current = true
 	cam3.position = pos3 + Vector3(sin(cam_yaw), 0.0, cos(cam_yaw)) * 6.0 + Vector3(0, 3.0, 0)
 
 
 func stop_play() -> void:
 	super()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if player3: player3.visible = false
 
 
 func jump_pressed() -> void:
 	if not dead and not won: jb3 = 0.12
+
+
+func _unhandled_input(e: InputEvent) -> void:
+	if app == null or app.screen != "edit" or app.mode != "play": return
+	if move_mode == "3d" and e is InputEventMouseMotion 			and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		cam_yaw -= (e as InputEventMouseMotion).relative.x * 0.0045
 
 
 func _process(delta: float) -> void:
@@ -376,6 +384,11 @@ func _physics_process(delta: float) -> void:
 		return
 	jb3 -= delta
 	_tick_player_timers(delta)
+	# caméra (mode 3D) : stick droit = rotation ; souris via _unhandled_input
+	if move_mode == "3d":
+		var rs := Input.get_joy_axis(0, JOY_AXIS_RIGHT_X)
+		if absf(rs) > 0.18:
+			cam_yaw -= rs * 2.8 * delta
 	# changement de mode : tuile sous les pieds
 	var here := Vector2i(int(pos3.x), int(pos3.z))
 	match int(app.grid.get(here, EMPTY)):
@@ -407,8 +420,6 @@ func _physics_process(delta: float) -> void:
 			var mv := fwd * (-dz) + right * dx
 			if mv.length() > 0.1:
 				mv = mv.normalized()
-				# la caméra glisse derrière la direction de course
-				cam_yaw = lerp_angle(cam_yaw, atan2(-mv.x, -mv.z), clampf(2.6 * delta, 0.0, 1.0))
 			vel3.x = mv.x * SPEED3
 			vel3.z = mv.z * SPEED3
 	# saut + gravité
