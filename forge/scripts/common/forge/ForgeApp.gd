@@ -395,7 +395,8 @@ func _edit_input(e: InputEvent) -> void:
 		# bande de styles graphiques (gauche) : clic = sélection, ne pose pas de tuile
 		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and gfx.click(mb.position):
 			return
-		# inspecteur : clic gauche = valeur suivante, droit = précédente
+		# barre du haut (palette) puis inspecteur : prioritaires sur la pose
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and _topbar_click(): return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and _insp_click(1): return
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and _insp_click(-1): return
 		_sync_cursor_from_aim()
@@ -414,6 +415,7 @@ func _edit_input(e: InputEvent) -> void:
 		elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]): _sel_cancel()
 		return
 	if _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], true):
+		if _topbar_click(): return
 		if _insp_click(1): return
 		if not radial_open: _begin_stroke(true)
 		return
@@ -1396,8 +1398,9 @@ func _process(delta: float) -> void:
 
 
 func _edit_area() -> Rect2:
+	# inclut la TOPBAR : le pointeur peut atteindre la palette du haut
 	var vp := get_viewport_rect().size
-	return Rect2(0, TOPBAR, vp.x, vp.y - TOPBAR - BOTTOM)
+	return Rect2(0, 0, vp.x, vp.y - BOTTOM)
 
 
 func _dpad_held() -> Vector2i:
@@ -1412,6 +1415,21 @@ func _dpad_held() -> Vector2i:
 func _nudge_aim(d: Vector2i) -> void:
 	# déplace le pointeur d'une cellule dans la direction d
 	aim += Vector2(d) * CELL * view_scale
+
+
+# clic pointeur sur la barre du haut (palette) : catégorie / cycle de tuile
+func _topbar_click() -> bool:
+	if aim.y >= TOPBAR + 14.0 or mode != "edit" or bg_edit: return false
+	var i := int((aim.x - 90.0) / 52.0)
+	if aim.x >= 90.0 and i >= 0 and i < _cats().size():
+		if i == cat:
+			# catégorie déjà active → tuile suivante dans la catégorie
+			var n: int = (_cats()[i]["tiles"] as Array).size()
+			cat_pal[i] = (cat_pal[i] + 1) % n
+		else:
+			cat = i
+		_play("coin"); queue_redraw()
+	return true   # tout clic dans la topbar est consommé (pas de pose dessous)
 
 
 func _insp_hover() -> bool:
@@ -1827,8 +1845,13 @@ func _draw_inspector(vp: Vector2) -> void:
 		var cur_t: int = int(grid.get(cursor, -1))
 		if not _cfg_fields_for(cur_t).is_empty():
 			insp_cell = cursor
-		elif not _insp_hover():
-			insp_cell = Vector2i(-999, -999)
+		elif insp_cell != Vector2i(-999, -999):
+			# garde l'épingle : survol du panneau OU corridor d'approche (droite de
+			# l'écran) — se ferme en repartant à gauche ou si l'objet a disparu
+			var still: int = int(grid.get(insp_cell, -1))
+			var keep := _insp_hover() or (insp_panel.size.x > 0.0 and aim.x > insp_panel.position.x - 200.0)
+			if not keep or still < 0 or _cfg_fields_for(still).is_empty():
+				insp_cell = Vector2i(-999, -999)
 	var cell := cfg_cell if cfg_open else insp_cell
 	var t: int = int(grid.get(cell, -1))
 	var fields := cfg_fields if cfg_open else _cfg_fields_for(t)
@@ -1844,6 +1867,9 @@ func _draw_inspector(vp: Vector2) -> void:
 	var acc := UI_ACCENT if (cfg_open or hovered) else Color(1, 1, 1, 0.35)
 	draw_rect(insp_panel, Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.96 if hovered else 0.9))
 	draw_rect(insp_panel, acc, false, 2.0 if (cfg_open or hovered) else 1.0)
+	# lien visuel : cadre sur l'objet inspecté dans le monde
+	var wp := _w2s(Vector2(cell.x * CELL, cell.y * CELL))
+	draw_rect(Rect2(wp, Vector2(CELL, CELL) * view_scale), acc, false, 2.0)
 	# en-tête : aperçu de la tuile + nom
 	tmpl.draw_tile(self, o + Vector2(10, 8), t, 0.55)
 	_text(f, o + Vector2(44, 20), tmpl.tile_name(t), Color.WHITE, 14)
