@@ -102,23 +102,47 @@ func debug_text() -> String:
 
 
 func seed_demo() -> void:
+	# petit niveau-vitrine : sauts → pentes → plateforme mobile → ressort/pics → arrivée
 	var grid: Dictionary = app.grid
 	var cols: int = app.cols
 	var rows: int = app.rows
 	grid.clear()
 	for x in range(0, cols):
 		grid[Vector2i(x, rows - 1)] = GROUND
-	for x in range(8, 12):
-		grid[Vector2i(x, rows - 4)] = GROUND
-	for x in range(16, 19):
-		grid[Vector2i(x, rows - 6)] = GROUND
 	grid[Vector2i(2, rows - 2)] = SPAWN
+	# 1) sauts simples + pièces
+	for x in range(7, 10):
+		grid[Vector2i(x, rows - 4)] = GROUND
+	grid[Vector2i(8, rows - 5)] = COIN
 	grid[Vector2i(9, rows - 5)] = COIN
-	grid[Vector2i(10, rows - 5)] = COIN
-	grid[Vector2i(17, rows - 7)] = COIN
-	grid[Vector2i(13, rows - 2)] = ENEMY
-	grid[Vector2i(22, rows - 2)] = SPRING
-	grid[Vector2i(26, rows - 2)] = SPIKE
+	grid[Vector2i(12, rows - 2)] = ENEMY
+	# 2) colline en pentes (montée, plateau, descente)
+	grid[Vector2i(15, rows - 2)] = SLOPE_R
+	grid[Vector2i(16, rows - 2)] = GROUND
+	grid[Vector2i(16, rows - 3)] = SLOPE_R
+	grid[Vector2i(17, rows - 2)] = GROUND
+	grid[Vector2i(17, rows - 3)] = GROUND
+	grid[Vector2i(17, rows - 4)] = COIN
+	grid[Vector2i(18, rows - 2)] = GROUND
+	grid[Vector2i(18, rows - 3)] = SLOPE_L
+	grid[Vector2i(19, rows - 2)] = SLOPE_L
+	# 3) checkpoint puis plateforme mobile au-dessus d'une fosse de pics
+	grid[Vector2i(21, rows - 2)] = CHECKPOINT
+	for x in range(23, 27):
+		grid.erase(Vector2i(x, rows - 1))
+		grid[Vector2i(x, rows - 1)] = SPIKE
+	grid[Vector2i(23, rows - 5)] = MOVPLAT
+	for x in range(27, cols):
+		grid[Vector2i(x, rows - 1)] = GROUND
+	# 4) mur cassable qui cache une pièce + ressort vers une corniche bonus
+	for y in range(rows - 4, rows - 1):
+		grid[Vector2i(29, y)] = BREAKABLE
+	grid[Vector2i(30, rows - 2)] = COIN
+	grid[Vector2i(33, rows - 2)] = SPRING
+	for x in range(34, 37):
+		grid[Vector2i(x, rows - 7)] = GROUND
+	grid[Vector2i(35, rows - 8)] = COIN
+	grid[Vector2i(35, rows - 2)] = ENEMY
 	grid[Vector2i(cols - 2, rows - 2)] = GOAL
 	app.cursor = Vector2i(4, rows - 3)
 

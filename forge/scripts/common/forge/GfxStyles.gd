@@ -4,7 +4,9 @@ class_name GfxStyles
 # pixelisation (post-process plein écran derrière l'UI), bande de sélection à
 # gauche et transition (wipe) au changement. Le mode vit dans level_props.gfx.
 
+const DEFAULT_MODE := 4   # SPARK = rendu brut sans filtre (style par défaut)
 const STYLES := [
+	{"name": "SPARK", "mode": 4, "sw": Color("f39c12"), "px": 1.0},
 	{"name": "GB",   "mode": 1, "sw": Color("8bac0f"), "px": 4.0},
 	{"name": "GBC",  "mode": 2, "sw": Color("f8b800"), "px": 3.0},
 	{"name": "SNES", "mode": 0, "sw": Color("7878f8"), "px": 1.0},
@@ -81,7 +83,7 @@ func attach_world(tmpl: Node) -> void:
 
 
 func apply() -> void:
-	var mode := int(app.level_props.get("gfx", 0))
+	var mode := int(app.level_props.get("gfx", DEFAULT_MODE))
 	mat.set_shader_parameter("mode", mode)
 	var px := 1.0
 	for s in STYLES:
@@ -91,7 +93,7 @@ func apply() -> void:
 
 
 func set_mode(mode: int) -> void:
-	if mode == int(app.level_props.get("gfx", 0)) and trans_t <= 0.0: return
+	if mode == int(app.level_props.get("gfx", DEFAULT_MODE)) and trans_t <= 0.0: return
 	pending = mode               # appliqué à mi-balayage (caché par le wipe)
 	trans_t = TRANS_DUR
 	app._play("coin")
@@ -134,7 +136,7 @@ func resize(vp: Vector2) -> void:
 func draw_strip() -> void:
 	var f := ThemeDB.fallback_font
 	var rects := strip_rects()
-	var cur: int = int(app.level_props.get("gfx", 0))
+	var cur: int = int(app.level_props.get("gfx", DEFAULT_MODE))
 	var panel := Rect2(Vector2(2, app.TOPBAR + 6), Vector2(54, rects.size() * 50.0 + 8.0))
 	app.draw_rect(panel, Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.85))
 	for i in rects.size():
@@ -161,7 +163,7 @@ func draw_transition(vp: Vector2) -> void:
 	app.draw_rect(cover, col)
 	var edge_x: float = cover.position.x + cover.size.x if t < 0.5 else cover.position.x
 	app.draw_rect(Rect2(Vector2(edge_x - 3, 0), Vector2(6, vp.y)), Color("f39c12"))
-	var mode := pending if pending >= 0 else int(app.level_props.get("gfx", 0))
+	var mode := pending if pending >= 0 else int(app.level_props.get("gfx", DEFAULT_MODE))
 	var nm := ""
 	for s in STYLES:
 		if int(s["mode"]) == mode: nm = str(s["name"])
