@@ -23,7 +23,7 @@ const TD_CATS := [
 	{"name": "Mur",     "tiles": [GROUND, BREAKABLE]},
 	{"name": "Repères", "tiles": [SPAWN, GOAL, DOOR, CHECKPOINT, WARP]},
 	{"name": "Items",   "tiles": [COIN, KEY]},
-	{"name": "Méca",    "tiles": [SWITCH, GATE, PLATE, PUSHBLOCK]},
+	{"name": "Méca",    "tiles": [SWITCH, GATE, PLATE, PUSHBLOCK, TRIGGER]},
 	{"name": "Ennemis", "tiles": [ENEMY, CHASER, FLYER, SHOOTER, BOSS]},
 	{"name": "Décor",   "tiles": [PALM, TREE, BUSH, FLOWER]},
 ]

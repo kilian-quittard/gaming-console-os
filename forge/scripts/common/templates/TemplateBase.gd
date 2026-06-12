@@ -27,7 +27,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FALLBLOCK, FIREBAR, CRUMBLE,
 	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP,
 	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE,
-	MODE25, MODE3D, PLANET, RAMP, LOOP3D }
+	MODE25, MODE3D, PLANET, RAMP, LOOP3D, TRIGGER }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -52,7 +52,7 @@ const NAMES := {
 	ENERGY: "Réservoir énergie", DOOR_BEAM: "Porte (tir)", DOOR_MISSILE: "Porte (missile)",
 	MORPH_TUBE: "Conduit (morph)",
 	MODE25: "Zone 2.5D", MODE3D: "Zone 3D", PLANET: "Planète (gravité)",
-	RAMP: "Rampe", LOOP3D: "Looping 3D"
+	RAMP: "Rampe", LOOP3D: "Looping 3D", TRIGGER: "Déclencheur"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -77,7 +77,7 @@ const COLORS := {
 	ENERGY: Color("ff5e8a"), DOOR_BEAM: Color("42a5f5"), DOOR_MISSILE: Color("ef5350"),
 	MORPH_TUBE: Color("78909c"),
 	MODE25: Color("26c6da"), MODE3D: Color("ab47bc"), PLANET: Color("5c9ded"),
-	RAMP: Color("a1887f"), LOOP3D: Color("ffa726")
+	RAMP: Color("a1887f"), LOOP3D: Color("ffa726"), TRIGGER: Color("b388ff")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -142,6 +142,8 @@ var hearts := 0            # PV courants (0 = système désactivé → mort inst
 var max_hearts := 0
 var pinv := 0.0            # invulnérabilité joueur (i-frames)
 var face_x := 1            # direction regardée (-1/1) — yeux du perso, canon metroid
+var trig_cells := []       # cases TRIGGER du niveau (cache du run)
+var trig_fired := {}       # déclencheurs déjà tirés (one-shot, par run)
 var dash_cd := 0.0
 var dashing := 0.0
 var dash_dir := Vector2.RIGHT
@@ -226,6 +228,15 @@ func config_fields(t: int) -> Array:
 	if t == KEY or t == DOOR or t == SWITCH or t == GATE or t == PLATE:
 		return [{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert", "rose"], "def": "or"}]
 	# sortie/warp : sa propre porte n° + destination (niveau + porte d'arrivée)
+	# déclencheur : QUAND condition ALORS action (le cœur de la logique visuelle)
+	if t == TRIGGER:
+		return [
+			{"key": "when", "label": "Quand",  "opts": ["entre", "pièces", "tous tués", "chrono"], "def": "entre"},
+			{"key": "n",     "label": "N",     "opts": [1, 2, 3, 5, 8, 10, 15, 20, 30, 60],        "def": 5},
+			{"key": "do",    "label": "Alors", "opts": ["message", "ouvre", "ferme", "apparait"],   "def": "message"},
+			{"key": "color", "label": "Couleur", "opts": ["or", "rouge", "bleu", "vert", "rose"],   "def": "or"},
+			{"key": "msg",   "label": "Texte", "opts": ["Bravo !", "Attention…", "Secret découvert !", "Par ici →", "Piège !", "Dépêche-toi !"], "def": "Bravo !"},
+		]
 	if t == WARP:
 		var lvls: Array = app.level_ids()
 		return [
@@ -262,6 +273,10 @@ func start_play(from_cursor: bool) -> void:
 		if app.grid[k] == PLATE: plate_cells.append(k)
 	sw_open = {}; open_gate_cells = {}
 	gates_open = false; switch_cd = 0.0; autorun_dir = 1
+	trig_fired = {}
+	trig_cells = []
+	for k in app.grid:
+		if app.grid[k] == TRIGGER: trig_cells.append(k)
 	_build_entities()
 	_place_player(spawn_cell)
 
@@ -683,8 +698,46 @@ func _kill() -> void:
 	player_died.emit()
 
 
+# déclencheurs : QUAND condition (entrée / pièces / ennemis / chrono) ALORS action
+func _update_triggers() -> void:
+	if trig_cells.is_empty(): return
+	var prect := Rect2(ppos, PSIZE)
+	for c in trig_cells:
+		if trig_fired.has(c) or app.grid.get(c, EMPTY) != TRIGGER: continue
+		var cfg: Dictionary = app.cell_cfg.get(c, {})
+		var ok := false
+		match str(cfg.get("when", "entre")):
+			"entre":     ok = prect.intersects(_cell_rect(c))
+			"pièces":    ok = coins_got >= int(cfg.get("n", 5))
+			"tous tués": ok = _enemies_left() == 0
+			"chrono":    ok = play_time >= float(int(cfg.get("n", 5)))
+		if not ok: continue
+		trig_fired[c] = true
+		_fire_trigger(c, cfg)
+
+
+func _fire_trigger(c: Vector2i, cfg: Dictionary) -> void:
+	var col := str(cfg.get("color", "or"))
+	match str(cfg.get("do", "message")):
+		"message":
+			app._set_toast(str(cfg.get("msg", "…"))); app._play("checkpoint")
+		"ouvre":
+			sw_open[col] = true
+			app._emit(_cell_center(c), 12, KEY_COLORS.get(col, Color.WHITE), 200.0, 0.4, true, 4.0)
+			app._play("switch"); app._shake(2.0, 0.1)
+		"ferme":
+			sw_open[col] = false
+			app._play("switch"); app._shake(2.0, 0.1)
+		"apparait":
+			enemies.append({"type": "chaser", "pos": _cell_center(c) - Vector2(ESIZE, ESIZE) * 0.5,
+				"dir": -1, "alive": true, "phase": 0.0})
+			app._emit(_cell_center(c), 14, COLORS[ENEMY], 220.0, 0.5, true, 4.0)
+			app._play("stomp"); app._shake(3.0, 0.12)
+
+
 func _interactions(delta: float) -> void:
 	if not won: play_time += delta   # chrono de stats (s'arrête à la victoire)
+	_update_triggers()
 	# chrono : si une limite est posée, décompte et mort si épuisé
 	if time_left > 0.0:
 		time_left -= delta
@@ -1293,6 +1346,16 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col.darkened(0.35), false, maxf(1.0, scale))
 			return
 	match t:
+		TRIGGER:
+			# zone invisible en jeu ; en édition : cadre pointillé + éclair
+			if app != null and app.mode == "play": return
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs, cs) - Vector2(pad, pad) * 2.0), Color(col.r, col.g, col.b, 0.18))
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs, cs) - Vector2(pad, pad) * 2.0), col, false, 2.0 * scale)
+			var cx := p + Vector2(cs, cs) * 0.5
+			ci.draw_colored_polygon(PackedVector2Array([
+				cx + Vector2(cs * 0.06, -cs * 0.26), cx + Vector2(-cs * 0.10, cs * 0.04),
+				cx + Vector2(cs * 0.02, cs * 0.04), cx + Vector2(-cs * 0.06, cs * 0.26),
+				cx + Vector2(cs * 0.12, -cs * 0.04), cx + Vector2(cs * 0.00, -cs * 0.04)]), col)
 		COIN:
 			ci.draw_circle(p + Vector2(cs, cs) * 0.5, cs * 0.3, col)
 		KEY:

@@ -307,6 +307,31 @@ func _self_test() -> void:
 		if f % 20 == 0:
 			print("f%3d x=%4.0f y=%4.0f sgr=%s gsp=%5.0f ang=%+.2f" % [f, tmpl.ppos.x, tmpl.ppos.y, str(pt.sonic_grounded), pt.gsp, pt.gangle])
 	level_props = {}
+
+	print("=== TRIGGERS (entre→ouvre grille ; chrono→message ; pièces→apparait) ===")
+	grid.clear(); cell_cfg.clear()
+	for x in range(cols):
+		grid[Vector2i(x, rows - 1)] = tmpl.GROUND
+	grid[Vector2i(2, rows - 2)] = tmpl.SPAWN
+	grid[Vector2i(5, rows - 2)] = tmpl.TRIGGER
+	cell_cfg[Vector2i(5, rows - 2)] = {"when": "entre", "do": "ouvre", "color": "rouge"}
+	grid[Vector2i(8, rows - 2)] = tmpl.GATE
+	cell_cfg[Vector2i(8, rows - 2)] = {"color": "rouge"}
+	grid[Vector2i(10, rows - 2)] = tmpl.TRIGGER
+	cell_cfg[Vector2i(10, rows - 2)] = {"when": "chrono", "n": 1, "do": "message", "msg": "CHRONO OK"}
+	grid[Vector2i(12, rows - 2)] = tmpl.TRIGGER
+	cell_cfg[Vector2i(12, rows - 2)] = {"when": "pièces", "n": 1, "do": "apparait"}
+	tmpl.start_play(false)
+	tmpl.test_dir = 1
+	var seen_gate := false
+	for f in range(240):
+		tmpl._physics_process(dt)
+		if not tmpl.open_gate_cells.is_empty(): seen_gate = true
+		if f == 120: tmpl.coins_got = 1   # simule un ramassage → trigger "pièces"
+	print("gate ouverte par trigger: %s (attendu true)" % str(seen_gate))
+	print("toast chrono: '%s' (attendu CHRONO OK)" % toast)
+	print("ennemis spawned: %d (attendu 1)" % tmpl.enemies.size())
+	print("triggers tirés: %d / 3" % tmpl.trig_fired.size())
 	get_tree().quit()
 
 

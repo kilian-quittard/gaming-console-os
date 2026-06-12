@@ -26,6 +26,7 @@ const MD_CATS := [
 	{"name": "Danger",  "tiles": [SPIKE, LAVA, FIREBAR]},
 	{"name": "Ennemis", "tiles": [ENEMY, FLYER, CHASER, SHOOTER, BOSS]},
 	{"name": "Items",   "tiles": [COIN, KEY, DOOR]},
+	{"name": "Méca",    "tiles": [SWITCH, GATE, TRIGGER]},
 	{"name": "Reperes", "tiles": [SPAWN, GOAL, CHECKPOINT, WARP]},
 	{"name": "Decor",   "tiles": [PALM, TREE, BUSH, FLOWER]},
 ]

@@ -89,7 +89,7 @@ const CATEGORIES := [
 	{"name": "Danger",   "tiles": [7, 35, 36, 44, 45, 46]},
 	{"name": "Ennemis",  "tiles": [4, 37, 38, 39, 40, 41, 42, 43, 47]},
 	{"name": "Items",    "tiles": [3, 11, 6]},
-	{"name": "Mecanique","tiles": [9, 20, 22, 23, 24, 25, 12]},
+	{"name": "Mecanique","tiles": [9, 20, 22, 23, 24, 25, 12, 64]},
 	{"name": "Reperes",  "tiles": [2, 10, 5, 51]},
 	{"name": "Decor",    "tiles": [31, 32, 33, 34]},
 ]
