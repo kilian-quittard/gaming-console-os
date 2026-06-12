@@ -237,6 +237,8 @@ func config_fields(t: int) -> Array:
 # =================================================== play (générique)
 func start_play(from_cursor: bool) -> void:
 	last_from_cursor = from_cursor
+	# indique CLAIREMENT le mode de test (ST = début ; T/R3 = depuis le curseur)
+	app._set_toast("Test depuis le CURSEUR (R3/T)" if from_cursor else "Test depuis le DÉBUT")
 	if from_cursor:
 		spawn_cell = app.cursor
 	else:
