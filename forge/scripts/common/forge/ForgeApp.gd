@@ -184,6 +184,7 @@ var map_open := false            # minimap affichée (en test)
 var insp_cell := Vector2i(-999, -999)   # objet épinglé par l'inspecteur
 var insp_panel := Rect2()               # rect du panneau (hit-test pointeur)
 var insp_rows := []                     # rects des lignes (hit-test pointeur)
+var erase_last := Vector2i(-999, -999)  # dernière case effacée du stroke (1 couche/case)
 var visited_rooms := {}          # "niveau:salle" -> true (brouillard de la minimap, par run)
 var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
 var play_backup := {}            # id -> état AUTEUR des niveaux visités pendant le test
@@ -792,7 +793,7 @@ func _begin_stroke(place: bool) -> void:
 		else:
 			place_held = true; tmpl.place_tile(cursor, _active_tile(), true)
 	else:
-		erase_held = true; tmpl.erase_tile(cursor)
+		erase_held = true; tmpl.erase_tile(cursor); erase_last = cursor
 	queue_redraw(); _redraw_world()
 
 
@@ -1397,8 +1398,10 @@ func _process(delta: float) -> void:
 	var grid_changed := false
 	if place_held and not grabbing and grid.get(cursor) != _active_tile():
 		tmpl.place_tile(cursor, _active_tile(), false); grid_changed = true
-	elif erase_held and grid.has(cursor):
-		tmpl.erase_tile(cursor); grid_changed = true
+	elif erase_held and grid.has(cursor) and cursor != erase_last:
+		# une seule couche par case et par stroke (l'effacement est PROGRESSIF :
+		# objet → étage de bloc → sol → vide ; tenir B ne doit pas tout raser)
+		tmpl.erase_tile(cursor); erase_last = cursor; grid_changed = true
 	if grid_changed:
 		_redraw_world()
 	if moved or grid_changed or not particles.is_empty():
