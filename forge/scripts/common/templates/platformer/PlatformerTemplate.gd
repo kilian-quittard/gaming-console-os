@@ -251,6 +251,7 @@ func _physics_process(delta: float) -> void:
 		_update_enemies(delta)
 		if ppos.y > app.rows * CELL + 200: _kill()
 		_interactions(delta)
+		_p2_step(delta)
 		queue_redraw(); app.queue_redraw()
 		return
 
@@ -367,6 +368,7 @@ func _physics_process(delta: float) -> void:
 	_update_enemies(delta)
 	if ppos.y > app.rows * CELL + 200: _kill()
 	_interactions(delta)
+	_p2_step(delta)
 	queue_redraw()
 	app.queue_redraw()
 

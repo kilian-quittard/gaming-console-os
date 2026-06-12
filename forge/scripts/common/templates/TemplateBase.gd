@@ -144,6 +144,8 @@ var pinv := 0.0            # invulnérabilité joueur (i-frames)
 var face_x := 1            # direction regardée (-1/1) — yeux du perso, canon metroid
 var trig_cells := []       # cases TRIGGER du niveau (cache du run)
 var trig_fired := {}       # déclencheurs déjà tirés (one-shot, par run)
+# ---- CO-OP LOCAL (joueur 2) : état réduit, manette 2 ou clavier ZQSD ----
+var p2 := {}               # {} = inactif ; {pos, vel, floor, face, dead_t}
 var dash_cd := 0.0
 var dashing := 0.0
 var dash_dir := Vector2.RIGHT
@@ -279,6 +281,12 @@ func start_play(from_cursor: bool) -> void:
 		if app.grid[k] == TRIGGER: trig_cells.append(k)
 	_build_entities()
 	_place_player(spawn_cell)
+	# co-op : P2 apparaît à côté de P1 si l'option projet est active (genres 2D)
+	if bool(app.level_props.get("coop", false)) and wants_2d_world():
+		p2 = {"pos": ppos + Vector2(-CELL * 0.8, 0.0), "vel": Vector2.ZERO,
+			"floor": false, "face": 1, "dead_t": 0.0}
+	else:
+		p2 = {}
 
 
 # (re)construit les entités génériques + délègue au genre (_build_extra)
@@ -698,6 +706,178 @@ func _kill() -> void:
 	player_died.emit()
 
 
+# =================================================== CO-OP : joueur 2
+# Entrées P2 : manette n°2 (device 1) ou clavier ZQSD physique (Z saut/haut).
+func _p2_dir_x() -> int:
+	var v := 0
+	if Input.is_physical_key_pressed(KEY_A) or Input.is_joy_button_pressed(1, JOY_BUTTON_DPAD_LEFT) \
+			or Input.get_joy_axis(1, JOY_AXIS_LEFT_X) < -0.4: v -= 1
+	if Input.is_physical_key_pressed(KEY_D) or Input.is_joy_button_pressed(1, JOY_BUTTON_DPAD_RIGHT) \
+			or Input.get_joy_axis(1, JOY_AXIS_LEFT_X) > 0.4: v += 1
+	return v
+
+
+func _p2_dir_y() -> int:
+	var v := 0
+	if Input.is_physical_key_pressed(KEY_W) or Input.is_joy_button_pressed(1, JOY_BUTTON_DPAD_UP) \
+			or Input.get_joy_axis(1, JOY_AXIS_LEFT_Y) < -0.4: v -= 1
+	if Input.is_physical_key_pressed(KEY_S) or Input.is_joy_button_pressed(1, JOY_BUTTON_DPAD_DOWN) \
+			or Input.get_joy_axis(1, JOY_AXIS_LEFT_Y) > 0.4: v += 1
+	return v
+
+
+func _p2_jump() -> bool:
+	return Input.is_physical_key_pressed(KEY_W) or Input.is_joy_button_pressed(1, JOY_BUTTON_A)
+
+
+# pas de vie perdue : P2 réapparaît en bulle à côté de P1 après un court délai
+func _p2_kill() -> void:
+	if float(p2.get("dead_t", 0.0)) > 0.0: return
+	app._emit(Vector2(p2.pos) + PSIZE * 0.5, 12, Color("4fc3f7"), 220.0, 0.4, true, 4.0)
+	app._play("hurt")
+	p2.dead_t = 2.5
+
+
+func _p2_respawn_near_p1() -> void:
+	p2.pos = ppos + Vector2(-CELL * 0.8, -CELL * 0.5)
+	p2.vel = Vector2.ZERO
+	app._emit(Vector2(p2.pos) + PSIZE * 0.5, 10, Color("4fc3f7"), 160.0, 0.4, false, 3.0)
+
+
+# interactions communes P2 : pièces (partagées), dangers, ressorts, ennemis (contact)
+func _p2_interactions() -> void:
+	var prect := Rect2(Vector2(p2.pos), PSIZE)
+	for c in _cells(prect):
+		match app.grid.get(c, EMPTY):
+			COIN:
+				app.grid.erase(c); coins_got += 1
+				app._emit(_cell_center(c), 8, COLORS[COIN], 160.0, 0.35, false, 3.0)
+				app._play("coin")
+			SPIKE, LAVA:
+				_p2_kill(); return
+			SPRING:
+				p2.vel.y = -980.0
+				app._play("spring")
+	for en in enemies:
+		if not en.alive: continue
+		var esz: float = BOSS_SIZE if en.type == "boss" else float(ESIZE)
+		if prect.intersects(Rect2(Vector2(en.pos), Vector2(esz, esz))):
+			_p2_kill(); return
+
+
+# physique P2 plateforme (gravité + marche + saut) — volontairement simple
+func _p2_step(delta: float) -> void:
+	if p2.is_empty(): return
+	if float(p2.dead_t) > 0.0:
+		p2.dead_t = float(p2.dead_t) - delta
+		if float(p2.dead_t) <= 0.0: _p2_respawn_near_p1()
+		return
+	var ix := _p2_dir_x()
+	if ix != 0: p2.face = ix
+	p2.vel.x = lerpf(float(p2.vel.x), float(ix) * 300.0, 0.25)
+	p2.vel.y = minf(float(p2.vel.y) + 1700.0 * delta, 900.0)
+	if bool(p2.floor) and _p2_jump():
+		p2.vel.y = -620.0
+		app._play("jump")
+	_p2_move(delta)
+	_p2_interactions()
+	_p2_leash()
+
+
+# physique P2 vue de dessus (8 directions, sans gravité)
+func _p2_step_td(delta: float) -> void:
+	if p2.is_empty(): return
+	if float(p2.dead_t) > 0.0:
+		p2.dead_t = float(p2.dead_t) - delta
+		if float(p2.dead_t) <= 0.0: _p2_respawn_near_p1()
+		return
+	var mv := Vector2(float(_p2_dir_x()), float(_p2_dir_y()))
+	if mv.length() > 0.0: mv = mv.normalized()
+	p2.vel = mv * 240.0
+	_p2_move_flat(delta)
+	_p2_interactions()
+	_p2_leash()
+
+
+# déplacement axe par axe contre les solides (partagé gravité/flat)
+func _p2_move(delta: float) -> void:
+	var pos: Vector2 = p2.pos
+	pos.x += float(p2.vel.x) * delta
+	for c in _cells(Rect2(pos, PSIZE)):
+		if _cell_solid(c):
+			var r := _cell_rect(c)
+			if Rect2(pos, PSIZE).intersects(r):
+				if float(p2.vel.x) > 0.0: pos.x = r.position.x - PSIZE.x
+				elif float(p2.vel.x) < 0.0: pos.x = r.position.x + r.size.x
+	pos.y += float(p2.vel.y) * delta
+	p2.floor = false
+	# rect étendu de 1px vers le bas : _cells a une grâce d'1px qui ferait
+	# osciller le contact sol (floor true/false une frame sur deux)
+	for c in _cells(Rect2(pos, PSIZE + Vector2(0.0, 1.0))):
+		var t: int = app.grid.get(c, EMPTY)
+		var solid: bool = _cell_solid(c) or (t == ONEWAY and float(p2.vel.y) > 0.0 \
+			and pos.y + PSIZE.y - float(p2.vel.y) * delta <= c.y * CELL + 6.0)
+		if solid:
+			var r := _cell_rect(c)
+			if Rect2(pos, PSIZE + Vector2(0.0, 1.0)).intersects(r):
+				if float(p2.vel.y) > 0.0:
+					pos.y = r.position.y - PSIZE.y; p2.vel.y = 0.0; p2.floor = true
+				elif float(p2.vel.y) < 0.0 and r.position.y < pos.y:
+					pos.y = r.position.y + r.size.y; p2.vel.y = 0.0
+	pos.x = clampf(pos.x, 0.0, app.cols * CELL - PSIZE.x)
+	if pos.y > app.rows * CELL + 200.0: _p2_kill()
+	p2.pos = pos
+
+
+func _p2_move_flat(delta: float) -> void:
+	var pos: Vector2 = p2.pos
+	pos.x += float(p2.vel.x) * delta
+	for c in _cells(Rect2(pos, PSIZE)):
+		if _cell_solid(c):
+			var r := _cell_rect(c)
+			if Rect2(pos, PSIZE).intersects(r):
+				if float(p2.vel.x) > 0.0: pos.x = r.position.x - PSIZE.x
+				elif float(p2.vel.x) < 0.0: pos.x = r.position.x + r.size.x
+	pos.y += float(p2.vel.y) * delta
+	for c in _cells(Rect2(pos, PSIZE)):
+		if _cell_solid(c):
+			var r := _cell_rect(c)
+			if Rect2(pos, PSIZE).intersects(r):
+				if float(p2.vel.y) > 0.0: pos.y = r.position.y - PSIZE.y
+				elif float(p2.vel.y) < 0.0: pos.y = r.position.y + r.size.y
+	pos.x = clampf(pos.x, 0.0, app.cols * CELL - PSIZE.x)
+	pos.y = clampf(pos.y, 0.0, app.rows * CELL - PSIZE.y)
+	p2.pos = pos
+
+
+# anti-décrochage : si P2 sort trop loin de l'écran de P1, il est ramené
+func _p2_leash() -> void:
+	if (Vector2(p2.pos) - ppos).length() > 800.0:
+		_p2_respawn_near_p1()
+
+
+# dessin P2 (humanoïde bleu) — même style que P1
+func _draw_p2() -> void:
+	if p2.is_empty() or float(p2.dead_t) > 0.0: return
+	var vs: float = app.view_scale
+	var anchor: Vector2 = app._w2s(Vector2(p2.pos) + Vector2(PSIZE.x * 0.5, PSIZE.y))
+	var pr := Rect2(anchor - Vector2(PSIZE.x * 0.5, PSIZE.y) * vs, PSIZE * vs)
+	var body := Color("4fc3f7")
+	var outline := Color("1a3a4a")
+	draw_rect(pr, body)
+	draw_rect(pr, outline, false, 2.0)
+	var eye_y: float = pr.position.y + pr.size.y * 0.32
+	var off: float = float(p2.face) * pr.size.x * 0.10
+	for ex in [pr.position.x + pr.size.x * 0.32 + off, pr.position.x + pr.size.x * 0.68 + off]:
+		draw_circle(Vector2(ex, eye_y), pr.size.x * 0.135, Color.WHITE)
+		draw_circle(Vector2(ex + off * 0.8, eye_y), pr.size.x * 0.07, outline)
+	_text(ThemeDB.fallback_font, pr.position + Vector2(pr.size.x * 0.22, -6.0), "P2", body, 11)
+
+
+func _text(f: Font, pos: Vector2, s: String, col: Color, size: int) -> void:
+	draw_string(f, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+
+
 # déclencheurs : QUAND condition (entrée / pièces / ennemis / chrono) ALORS action
 func _update_triggers() -> void:
 	if trig_cells.is_empty(): return
@@ -1042,6 +1222,7 @@ func _draw_player() -> void:
 		draw_circle(Vector2(ex2 + er * 0.9, eye_y + er * 1.5), er * 0.5, ch)
 	if has_key:
 		draw_circle(pr.position + Vector2(pr.size.x * 0.5, -8), 5, COLORS[KEY])
+	_draw_p2()
 
 
 # ================================================================ PARALLAX

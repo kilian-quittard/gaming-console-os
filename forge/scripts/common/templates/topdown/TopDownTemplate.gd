@@ -181,6 +181,7 @@ func _physics_process(delta: float) -> void:
 	_td_enemies(delta)
 	_update_projectiles(delta)   # tirs ennemis vs joueur (générique réutilisé)
 	_interactions(delta)         # pièces / clé / porte / arrivée / chrono (réutilisé)
+	_p2_step_td(delta)           # co-op : joueur 2 (8 directions)
 	queue_redraw(); app.queue_redraw()
 
 
@@ -363,6 +364,7 @@ func _draw() -> void:
 	else:
 		# petite "arme" tenue dans la direction (indicateur statique)
 		draw_line(ctr + face * rad * 0.6, ctr + face * (rad + 10.0 * vs), Color("bdc3c7"), 3.0 * vs)
+	_draw_p2()   # co-op : joueur 2 bleu
 
 
 # tuiles top-down : mur (GROUND) pierre dédiée + sol (FLOOR) dallé ; reste = parent

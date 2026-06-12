@@ -332,6 +332,28 @@ func _self_test() -> void:
 	print("toast chrono: '%s' (attendu CHRONO OK)" % toast)
 	print("ennemis spawned: %d (attendu 1)" % tmpl.enemies.size())
 	print("triggers tirés: %d / 3" % tmpl.trig_fired.size())
+
+	print("=== CO-OP P2 (spawn, gravité→sol, leash) ===")
+	level_props = {"coop": true}
+	cols = 40   # map large : le leash (800) doit se déclencher avant le clamp du bord
+	grid.clear(); cell_cfg.clear()
+	for x in range(cols):
+		grid[Vector2i(x, rows - 1)] = tmpl.GROUND
+	grid[Vector2i(2, rows - 2)] = tmpl.SPAWN
+	tmpl.test_dir = 0   # P1 immobile pendant ce test
+	tmpl.start_play(false)
+	print("p2 actif: %s (attendu true)" % str(not tmpl.p2.is_empty()))
+	tmpl.p2.pos = Vector2(tmpl.p2.pos.x, tmpl.p2.pos.y - 150.0)   # lâché en l'air
+	for f in range(90):
+		tmpl._physics_process(dt)
+	var on_ground: bool = bool(tmpl.p2.floor)
+	var resting_y: float = float(tmpl.p2.pos.y)
+	print("p2 au sol: %s (attendu true)  y=%.0f (attendu %.0f)" % [str(on_ground), resting_y, float((rows - 1) * 48) - tmpl.PSIZE.y])
+	tmpl.p2.pos = Vector2(tmpl.ppos.x + 900.0, tmpl.ppos.y)       # décroché (> seuil leash 800)
+	tmpl._physics_process(dt)
+	var dist: float = (Vector2(tmpl.p2.pos) - tmpl.ppos).length()
+	print("p2 ramené près de P1: %s (dist=%.0f, attendu < 200)" % [str(dist < 200.0), dist])
+	level_props = {}
 	get_tree().quit()
 
 
@@ -1005,6 +1027,8 @@ func _menu_def_build() -> Array:
 			"act": func() -> void: _toggle_prop("autorun", "Autorun")},
 		{"label": "Physique Sonic: %s" % _onoff(level_props.get("sonic", false)),
 			"act": func() -> void: _toggle_prop("sonic", "Physique Sonic")},
+		{"label": "2 joueurs (co-op): %s" % _onoff(level_props.get("coop", false)),
+			"act": func() -> void: _toggle_prop("coop", "Co-op local (manette 2 / ZQSD)")},
 		{"label": "Eau · Nage: %s" % _onoff(level_props.get("water_swim", false)),
 			"act": func() -> void: _toggle_prop("water_swim", "Eau · Nage")},
 		{"label": "Eau · Noyade: %s" % _onoff(level_props.get("water_drown", false)),
