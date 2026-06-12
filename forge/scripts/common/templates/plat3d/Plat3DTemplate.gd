@@ -343,22 +343,36 @@ func _build_world() -> void:
 			var lr := 3.0
 			var laxe := str(app.cell_cfg.get(k, {}).get("axe", "X"))
 			var lc := Vector3(cx, lr, cz)
-			var ltm := TorusMesh.new(); ltm.inner_radius = lr - 0.22; ltm.outer_radius = lr + 0.22
-			var lmi := MeshInstance3D.new(); lmi.mesh = ltm
-			lmi.material_override = _mat(Color("ffa726"), 0.6)
-			lmi.position = lc
-			lmi.rotation_degrees = Vector3(90, 0, 0) if laxe == "X" else Vector3(0, 0, 90)
-			world3.add_child(lmi)
-			nodes.append(lmi)
-			loops3.append({"c": lc, "axe": laxe, "r": lr})
+			var lpd := {"c": lc, "axe": laxe, "r": lr}
+			loops3.append(lpd)
+			# piste HÉLICOÏDALE (tire-bouchon) : ruban de segments, entrée≠sortie
+			var segs := 30
+			for i in segs:
+				var th0 := TAU * float(i) / float(segs)
+				var th1 := TAU * float(i + 1) / float(segs)
+				var p0 := _helix3(lpd, th0, lr, 1.0)
+				var p1 := _helix3(lpd, th1, lr, 1.0)
+				var mid := (p0 + p1) * 0.5
+				var ctr_th := lc + (Vector3.BACK if laxe == "X" else Vector3.RIGHT) * ((th0 + th1) * 0.5 / TAU) * LOOP3D_W
+				var inward := (ctr_th - mid).normalized()
+				var seg := MeshInstance3D.new()
+				var bm2 := BoxMesh.new(); bm2.size = Vector3(0.95, 0.16, (p1 - p0).length() * 1.15)
+				seg.mesh = bm2
+				seg.material_override = _mat(Color("ffa726"), 0.45 if i % 2 == 0 else 0.15)
+				seg.position = mid
+				seg.basis = Basis.looking_at((p1 - p0).normalized(), inward).orthonormalized()
+				world3.add_child(seg)
+				nodes.append(seg)
 			# dalle au sol + rampes tangentes d'entrée/sortie (look montagnes russes)
 			nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), Color("9e9e9e")))
 			var adir := Vector3.RIGHT if laxe == "X" else Vector3.BACK
+			var pdir := Vector3.BACK if laxe == "X" else Vector3.RIGHT
 			for sgn in [-1.0, 1.0]:
 				var rp := PrismMesh.new(); rp.size = Vector3(1.2, 0.5, 0.9)
 				var rmi2 := MeshInstance3D.new(); rmi2.mesh = rp
 				rmi2.material_override = _mat(Color("ffa726").darkened(0.25))
-				rmi2.position = Vector3(cx, 0.25, cz) + adir * sgn * 1.3
+				# entrée au pied ; SORTIE au bout de l'hélice (décalée de W)
+				rmi2.position = Vector3(cx, 0.25, cz) + adir * sgn * 1.3 + (pdir * LOOP3D_W if sgn > 0 else Vector3.ZERO)
 				rmi2.rotation_degrees = Vector3(0, (-90 if sgn > 0 else 90) if laxe == "X" else (0 if sgn > 0 else 180), 0)
 				world3.add_child(rmi2)
 				nodes.append(rmi2)
@@ -634,6 +648,15 @@ func _sonic_axis(v: float, input: float, delta: float, _axis: Vector3) -> float:
 	return v
 
 
+const LOOP3D_W := 1.7   # décalage latéral total du tire-bouchon (entrée → sortie)
+
+# point sur l'hélice d'un looping : cercle vertical + translation latérale continue
+func _helix3(lp, th: float, radius: float, dirn: float) -> Vector3:
+	var along: Vector3 = Vector3.RIGHT if lp.axe == "X" else Vector3.BACK
+	var perp: Vector3 = Vector3.BACK if lp.axe == "X" else Vector3.RIGHT
+	return (lp.c as Vector3) + along * (dirn * sin(th) * radius) 		- Vector3(0, cos(th) * radius, 0) + perp * (th / TAU) * LOOP3D_W
+
+
 # LOOPING 3D : rail paramétrique dans le plan vertical du looping.
 # Capture : physique Sonic active, au sol, assez vite, aligné sur le plan.
 func _loop3_step(delta: float) -> bool:
@@ -654,27 +677,23 @@ func _loop3_step(delta: float) -> bool:
 			return false
 		l3_th += l3_dir * (l3_v / rr) * delta
 		if l3_th >= TAU:
-			# tour complet : SORTIE au-delà de l'entrée, la course continue
-			# (+ léger déport latéral en 3D, façon tire-bouchon)
+			# bout de l'hélice : sortie DÉCALÉE latéralement (tire-bouchon), la
+			# course continue ; en voie 2.5D la voie se met à jour sur la sortie
 			on_loop3 = null
-			var perp := Vector3.BACK if lp.axe == "X" else Vector3.RIGHT
-			var side := perp * (0.6 if move_mode == "3d" else 0.0)
-			pos3 = lp.c - Vector3(0, lp.r, 0) + Vector3(0, 0.45, 0) + along * l3_dir * 1.4 + side
-			if move_mode != "3d":
-				if move_mode == "x": pos3.z = lock_coord
-				else: pos3.x = lock_coord
+			pos3 = _helix3(lp, TAU, lp.r, l3_dir) + Vector3(0, 0.45, 0) + along * l3_dir * 1.2
+			pos3.y = 0.45
+			if move_mode == "x": lock_coord = pos3.z
+			elif move_mode == "z": lock_coord = pos3.x
 			svel = along * l3_dir * l3_v
 			vel3 = svel
 			grounded3 = true
 			return false
-		# position sur le cercle (0 = bas, monte vers l'avant)
-		var off := along * (l3_dir * sin(l3_th) * rr) - Vector3(0, cos(l3_th) * rr, 0)
-		pos3 = lp.c + off
-		# verrouille l'axe perpendiculaire
-		if lp.axe == "X": pos3.z = lp.c.z
-		else: pos3.x = lp.c.x
-		# orientation + caméra : haut local = vers le centre du looping
-		var up_l: Vector3 = ((lp.c as Vector3) - pos3).normalized()
+		# position sur l'HÉLICE (0 = bas, monte vers l'avant, dérive latérale)
+		pos3 = _helix3(lp, l3_th, rr, l3_dir)
+		# orientation + caméra : haut local = vers le centre courant de l'hélice
+		var perp_h := Vector3.BACK if lp.axe == "X" else Vector3.RIGHT
+		var ctr_h: Vector3 = (lp.c as Vector3) + perp_h * (l3_th / TAU) * LOOP3D_W
+		var up_l: Vector3 = (ctr_h - pos3).normalized()
 		_up_step(up_l, delta * 2.0)
 		var head := along * l3_dir
 		var ct := pos3 + (Vector3.BACK if lp.axe == "X" else Vector3.RIGHT) * 8.5
