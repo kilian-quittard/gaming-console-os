@@ -180,6 +180,9 @@ var cur_level := "1"
 var cur_level_name := ""         # nom de la ZONE active ("Cavernes"...)
 var lvl_rename := false          # saisie du nom de zone en cours
 var map_open := false            # minimap affichée (en test)
+var insp_cell := Vector2i(-999, -999)   # objet épinglé par l'inspecteur
+var insp_panel := Rect2()               # rect du panneau (hit-test pointeur)
+var insp_rows := []                     # rects des lignes (hit-test pointeur)
 var visited_rooms := {}          # "niveau:salle" -> true (brouillard de la minimap, par run)
 var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
 var play_backup := {}            # id -> état AUTEUR des niveaux visités pendant le test
@@ -392,6 +395,9 @@ func _edit_input(e: InputEvent) -> void:
 		# bande de styles graphiques (gauche) : clic = sélection, ne pose pas de tuile
 		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and gfx.click(mb.position):
 			return
+		# inspecteur : clic gauche = valeur suivante, droit = précédente
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and _insp_click(1): return
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and _insp_click(-1): return
 		_sync_cursor_from_aim()
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and not radial_open and not sel_mode: _begin_stroke(true)
@@ -408,6 +414,7 @@ func _edit_input(e: InputEvent) -> void:
 		elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]): _sel_cancel()
 		return
 	if _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], true):
+		if _insp_click(1): return
 		if not radial_open: _begin_stroke(true)
 		return
 	if _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], false):
@@ -1407,7 +1414,27 @@ func _nudge_aim(d: Vector2i) -> void:
 	aim += Vector2(d) * CELL * view_scale
 
 
+func _insp_hover() -> bool:
+	return insp_panel.size.x > 0.0 and insp_panel.has_point(aim)
+
+
+# clic/A sur une ligne de l'inspecteur : change la valeur (dir = +1 / -1)
+func _insp_click(dir: int) -> bool:
+	if not _insp_hover(): return false
+	for i in insp_rows.size():
+		if (insp_rows[i] as Rect2).has_point(aim):
+			var t: int = int(grid.get(insp_cell, -1))
+			cfg_fields = _cfg_fields_for(t)
+			if i < cfg_fields.size():
+				cfg_cell = insp_cell; cfg_idx = i
+				_cfg_adjust(dir)
+				_play("coin")
+			return true
+	return true   # clic dans le panneau (hors ligne) : consommé quand même
+
+
 func _sync_cursor_from_aim() -> void:
+	if _insp_hover(): return   # pointeur sur l'inspecteur : on n'édite pas dessous
 	var w := _s2w(aim)
 	cursor.x = clampi(int(floor(w.x / CELL)), 0, cols - 1)
 	cursor.y = clampi(int(floor(w.y / CELL)), 0, rows - 1)
@@ -1790,37 +1817,55 @@ func _draw_edit_cursor() -> void:
 
 
 # INSPECTEUR (panneau droit) : s'affiche dès que l'objet sous le curseur est
-# configurable ; C / L3 prend le focus (▲▼ champ, ◄► régler, B valider).
+# configurable, reste ÉPINGLÉ tant que le pointeur est dessus. Chaque ligne est
+# cliquable au curseur : A/clic = valeur suivante, clic droit = précédente.
+# (C / L3 = mode focus dpad, toujours dispo.)
 func _draw_inspector(vp: Vector2) -> void:
-	var cell := cfg_cell if cfg_open else cursor
+	# épinglage : nouvel objet configurable sous le curseur → on le suit ;
+	# sinon on garde l'objet épinglé tant que le pointeur survole le panneau
+	if not cfg_open:
+		var cur_t: int = int(grid.get(cursor, -1))
+		if not _cfg_fields_for(cur_t).is_empty():
+			insp_cell = cursor
+		elif not _insp_hover():
+			insp_cell = Vector2i(-999, -999)
+	var cell := cfg_cell if cfg_open else insp_cell
 	var t: int = int(grid.get(cell, -1))
 	var fields := cfg_fields if cfg_open else _cfg_fields_for(t)
-	if fields.is_empty() or t < 0: return
+	if fields.is_empty() or t < 0:
+		insp_panel = Rect2(); insp_rows = []
+		return
 	var f := ThemeDB.fallback_font
 	var pw := 232.0
 	var ph := 74.0 + fields.size() * 32.0
 	var o := Vector2(vp.x - pw - 10.0, TOPBAR + 12.0)
-	var acc := UI_ACCENT if cfg_open else Color(1, 1, 1, 0.35)
-	draw_rect(Rect2(o, Vector2(pw, ph)), Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.92))
-	draw_rect(Rect2(o, Vector2(pw, ph)), acc, false, 2.0 if cfg_open else 1.0)
+	insp_panel = Rect2(o, Vector2(pw, ph))
+	var hovered := _insp_hover()
+	var acc := UI_ACCENT if (cfg_open or hovered) else Color(1, 1, 1, 0.35)
+	draw_rect(insp_panel, Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.96 if hovered else 0.9))
+	draw_rect(insp_panel, acc, false, 2.0 if (cfg_open or hovered) else 1.0)
 	# en-tête : aperçu de la tuile + nom
 	tmpl.draw_tile(self, o + Vector2(10, 8), t, 0.55)
 	_text(f, o + Vector2(44, 20), tmpl.tile_name(t), Color.WHITE, 14)
 	_text(f, o + Vector2(44, 36), "case %d,%d" % [cell.x, cell.y], Color(1, 1, 1, 0.4), 10)
+	insp_rows = []
 	for i in fields.size():
 		var fld: Dictionary = fields[i]
 		var y := o.y + 60.0 + i * 32.0
-		var sel := cfg_open and i == cfg_idx
+		var row := Rect2(Vector2(o.x + 5, y - 14), Vector2(pw - 10, 28))
+		insp_rows.append(row)
+		var sel := (cfg_open and i == cfg_idx) or (hovered and row.has_point(aim))
 		if sel:
-			draw_rect(Rect2(Vector2(o.x + 5, y - 14), Vector2(pw - 10, 26)), Color(1, 1, 1, 0.08))
+			draw_rect(row, Color(1, 1, 1, 0.10))
 		_text(f, Vector2(o.x + 12, y + 5), str(fld["label"]), Color(1, 1, 1, 0.75), 12)
 		var val := str(_cfg_get(fld, cell))
 		# pastille pour les couleurs (visuel direct)
 		if str(fld["key"]) == "color" and tmpl.KEY_COLORS.has(val):
-			draw_circle(Vector2(o.x + pw - 60, y), 6.0, tmpl.KEY_COLORS[val])
+			draw_circle(Vector2(o.x + pw - 76, y), 6.0, tmpl.KEY_COLORS[val])
 		var vcol := UI_ACCENT if sel else Color(1, 1, 1, 0.9)
-		_text(f, Vector2(o.x + pw - 48 - val.length() * 3.0, y + 5), ("◄%s►" % val) if sel else val, vcol, 12)
-	var hint := "◄► régler  ▲▼ champ  B OK" if cfg_open else "C / L3 : modifier"
+		_text(f, Vector2(o.x + pw - 62, y + 5), "◄ %s ►" % val, vcol, 12)
+	var hint := "pointe une ligne · A/clic + · clic droit −"
+	if cfg_open: hint = "◄► régler  ▲▼ champ  B OK"
 	_text(f, Vector2(o.x + 12, o.y + ph - 10), hint, Color(1, 1, 1, 0.4), 10)
 
 
