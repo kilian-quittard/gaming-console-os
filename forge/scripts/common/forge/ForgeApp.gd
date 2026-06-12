@@ -423,6 +423,7 @@ func _edit_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_BRACKETRIGHT, KEY_E], [JOY_BUTTON_RIGHT_SHOULDER]): _cycle(1)
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START]): _start_play(false)
 	elif _press(e, [KEY_T], [JOY_BUTTON_RIGHT_STICK]): _start_play(true)
+	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _open_config()
 	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _toggle_cursor_mode()
 	elif e is InputEventKey and e.pressed and not e.echo and e.keycode >= KEY_1 and e.keycode <= KEY_7:
 		cat = mini(e.keycode - KEY_1, _cats().size() - 1); queue_redraw()
@@ -838,7 +839,6 @@ func _menu_def_build() -> Array:
 		{"label": "Sauvegarder", "act": _save_current},
 		{"label": "Copier zone", "act": _start_selection},
 		{"label": "Coller ici", "act": _paste_clip},
-		{"label": "Configurer objet…", "act": _open_config, "modal": true},
 		{"label": "Vider niveau", "act": func() -> void:
 			_push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")},
 		{"label": "Customiser le fond…", "act": bg_ed.open, "modal": true},
@@ -923,8 +923,9 @@ func _open_config() -> void:
 	cfg_cell = cursor; cfg_idx = 0; cfg_open = true; queue_redraw()
 
 
-func _cfg_get(fld: Dictionary):
-	var d: Dictionary = cell_cfg.get(cfg_cell, {})
+func _cfg_get(fld: Dictionary, cell: Vector2i = Vector2i(-999, -999)):
+	if cell == Vector2i(-999, -999): cell = cfg_cell
+	var d: Dictionary = cell_cfg.get(cell, {})
 	return d.get(fld["key"], fld["def"])
 
 
@@ -1753,10 +1754,11 @@ func _draw() -> void:
 	if mode == "edit" and not menu_open and not radial_open and not bg_edit and aim.x >= 0.0:
 		_draw_reticle()
 	if room_edit: room_ed.draw(vp)
+	if mode == "edit" and not menu_open and not radial_open and not bg_edit and not room_edit:
+		_draw_inspector(vp)
 	if bg_edit: bg_ed.draw(vp)
 	if radial_open: _draw_radial(vp)
 	if menu_open: _draw_menu(vp)
-	if cfg_open: _draw_config(vp)
 	if ai_open: _draw_ai_panel(vp)
 	if toast_t > 0.0: _draw_toast(vp)
 	if mode == "play" and tmpl.won: _draw_banner(vp)
@@ -1787,26 +1789,39 @@ func _draw_edit_cursor() -> void:
 	draw_rect(Rect2(cp, Vector2(CELL, CELL) * view_scale), cc, false, 3.0)
 
 
-func _draw_config(vp: Vector2) -> void:
+# INSPECTEUR (panneau droit) : s'affiche dès que l'objet sous le curseur est
+# configurable ; C / L3 prend le focus (▲▼ champ, ◄► régler, B valider).
+func _draw_inspector(vp: Vector2) -> void:
+	var cell := cfg_cell if cfg_open else cursor
+	var t: int = int(grid.get(cell, -1))
+	var fields := cfg_fields if cfg_open else _cfg_fields_for(t)
+	if fields.is_empty() or t < 0: return
 	var f := ThemeDB.fallback_font
-	var pw := 360.0
-	var ph := 60.0 + cfg_fields.size() * 34.0
-	var o := Vector2(vp.x * 0.5 - pw * 0.5, vp.y * 0.5 - ph * 0.5)
-	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.5))
-	draw_rect(Rect2(o, Vector2(pw, ph)), Color("0d1117"))
-	draw_rect(Rect2(o, Vector2(pw, ph)), Color("f39c12"), false, 2.0)
-	_text(f, o + Vector2(16, 28), "Config : %s" % tmpl.tile_name(int(grid.get(cfg_cell, 0))), Color("f39c12"), 16)
-	for i in cfg_fields.size():
-		var fld: Dictionary = cfg_fields[i]
-		var y := o.y + 52.0 + i * 34.0
-		var sel := (i == cfg_idx)
+	var pw := 232.0
+	var ph := 74.0 + fields.size() * 32.0
+	var o := Vector2(vp.x - pw - 10.0, TOPBAR + 12.0)
+	var acc := UI_ACCENT if cfg_open else Color(1, 1, 1, 0.35)
+	draw_rect(Rect2(o, Vector2(pw, ph)), Color(13.0 / 255, 17.0 / 255, 23.0 / 255, 0.92))
+	draw_rect(Rect2(o, Vector2(pw, ph)), acc, false, 2.0 if cfg_open else 1.0)
+	# en-tête : aperçu de la tuile + nom
+	tmpl.draw_tile(self, o + Vector2(10, 8), t, 0.55)
+	_text(f, o + Vector2(44, 20), tmpl.tile_name(t), Color.WHITE, 14)
+	_text(f, o + Vector2(44, 36), "case %d,%d" % [cell.x, cell.y], Color(1, 1, 1, 0.4), 10)
+	for i in fields.size():
+		var fld: Dictionary = fields[i]
+		var y := o.y + 60.0 + i * 32.0
+		var sel := cfg_open and i == cfg_idx
 		if sel:
-			draw_rect(Rect2(Vector2(o.x + 6, y - 18), Vector2(pw - 12, 28)), Color(1, 1, 1, 0.08))
-		_text(f, Vector2(o.x + 18, y + 3), str(fld["label"]), Color(1, 1, 1, 0.8), 14)
-		var val := str(_cfg_get(fld))
-		var vcol := Color("f39c12") if sel else Color(1, 1, 1, 0.9)
-		_text(f, Vector2(o.x + pw - 150, y + 3), "◄ %s ►" % val, vcol, 14)
-	_text(f, o + Vector2(16, ph - 10), "◄ ► régler   ▲▼ champ   B fermer", Color(1, 1, 1, 0.4), 11)
+			draw_rect(Rect2(Vector2(o.x + 5, y - 14), Vector2(pw - 10, 26)), Color(1, 1, 1, 0.08))
+		_text(f, Vector2(o.x + 12, y + 5), str(fld["label"]), Color(1, 1, 1, 0.75), 12)
+		var val := str(_cfg_get(fld, cell))
+		# pastille pour les couleurs (visuel direct)
+		if str(fld["key"]) == "color" and tmpl.KEY_COLORS.has(val):
+			draw_circle(Vector2(o.x + pw - 60, y), 6.0, tmpl.KEY_COLORS[val])
+		var vcol := UI_ACCENT if sel else Color(1, 1, 1, 0.9)
+		_text(f, Vector2(o.x + pw - 48 - val.length() * 3.0, y + 5), ("◄%s►" % val) if sel else val, vcol, 12)
+	var hint := "◄► régler  ▲▼ champ  B OK" if cfg_open else "C / L3 : modifier"
+	_text(f, Vector2(o.x + 12, o.y + ph - 10), hint, Color(1, 1, 1, 0.4), 10)
 
 
 func _draw_reticle() -> void:
