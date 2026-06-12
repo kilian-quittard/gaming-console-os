@@ -26,7 +26,8 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	CHASER, HOPPER, BOUNCER, SHOOTER,
 	FALLBLOCK, FIREBAR, CRUMBLE,
 	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP,
-	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE }
+	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE,
+	MODE25, MODE3D }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -49,7 +50,8 @@ const NAMES := {
 	WARP: "Sortie (warp)",
 	ITEM_DJUMP: "Double-saut", ITEM_MORPH: "Morph ball", ITEM_MISSILE: "Missiles (+5)",
 	ENERGY: "Réservoir énergie", DOOR_BEAM: "Porte (tir)", DOOR_MISSILE: "Porte (missile)",
-	MORPH_TUBE: "Conduit (morph)"
+	MORPH_TUBE: "Conduit (morph)",
+	MODE25: "Zone 2.5D", MODE3D: "Zone 3D"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -72,7 +74,8 @@ const COLORS := {
 	WARP: Color("9b59f5"),
 	ITEM_DJUMP: Color("4cd6b3"), ITEM_MORPH: Color("ffb74d"), ITEM_MISSILE: Color("ff7043"),
 	ENERGY: Color("ff5e8a"), DOOR_BEAM: Color("42a5f5"), DOOR_MISSILE: Color("ef5350"),
-	MORPH_TUBE: Color("78909c")
+	MORPH_TUBE: Color("78909c"),
+	MODE25: Color("26c6da"), MODE3D: Color("ab47bc")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -1469,6 +1472,16 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 				var hx := cs * (0.1 + i * 0.25)
 				ci.draw_line(p + Vector2(hx, cs * 0.1), p + Vector2(hx + cs * 0.12, cs * 0.9), col.lightened(0.1), 2.0 * scale)
 			ci.draw_rect(Rect2(p, Vector2(cs, cs)), col.darkened(0.55), false, maxf(1.0, scale))
+		MODE25, MODE3D:
+			# déclencheur de mode caméra/déplacement (plateformer 3D)
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col.darkened(0.35))
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col, false, 2.0 * scale)
+			var mc := p + Vector2(cs, cs) * 0.5
+			if t == MODE25:
+				ci.draw_line(mc - Vector2(cs * 0.26, 0), mc + Vector2(cs * 0.26, 0), col.lightened(0.3), 3.0 * scale)
+			else:
+				ci.draw_line(mc - Vector2(cs * 0.24, 0), mc + Vector2(cs * 0.24, 0), col.lightened(0.3), 3.0 * scale)
+				ci.draw_line(mc - Vector2(0, cs * 0.24), mc + Vector2(0, cs * 0.24), col.lightened(0.3), 3.0 * scale)
 		WARP:
 			# portail : double anneau + tourbillon
 			var wc := p + Vector2(cs, cs) * 0.5

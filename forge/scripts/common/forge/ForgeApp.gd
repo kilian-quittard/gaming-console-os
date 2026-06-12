@@ -9,7 +9,7 @@ const BOTTOM := 34
 const LEVEL_COLS_DEF := 40
 const TEMPLATES := {
 	"2D": [{"id": "platformer", "name": "Plateformer"}, {"id": "topdown", "name": "Vue de dessus"}, {"id": "metroid", "name": "Metroidvania"}],
-	"3D": []
+	"3D": [{"id": "plat3d", "name": "Plateformer 3D"}]
 }
 const CURSOR_DELAY := 0.25
 const RATE_SLOW := 0.12
@@ -25,6 +25,7 @@ const TEMPLATE_SCENES := {
 	"platformer": preload("res://scenes/game/PlatformerPlay.tscn"),
 	"topdown": preload("res://scenes/game/TopDownPlay.tscn"),
 	"metroid": preload("res://scenes/game/MetroidPlay.tscn"),
+	"plat3d": preload("res://scenes/game/Plat3DPlay.tscn"),
 }
 var tmpl_kind := ""
 
@@ -186,9 +187,9 @@ var insp_rows := []                     # rects des lignes (hit-test pointeur)
 var visited_rooms := {}          # "niveau:salle" -> true (brouillard de la minimap, par run)
 var warp_cd := 0.0               # anti re-déclenchement du warp à l'arrivée
 var play_backup := {}            # id -> état AUTEUR des niveaux visités pendant le test
-                                 # (le jeu mute la grille : pièces/objets pris, portes ouvertes ;
-                                 #  restauré en sortant du test ou en relançant — mais PAS au
-                                 #  retour dans une zone pendant la même partie)
+								 # (le jeu mute la grille : pièces/objets pris, portes ouvertes ;
+								 #  restauré en sortant du test ou en relançant — mais PAS au
+								 #  retour dans une zone pendant la même partie)
 var room_edit := false           # mode édition des salles
 var room_ed: RoomEditor = null   # module d'édition des salles
 

@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cplat3dplay001"]
+
+[ext_resource type="Script" path="res://scripts/common/templates/plat3d/Plat3DTemplate.gd" id="1_tmpl"]
+
+[node name="Plat3DPlay" type="Node2D"]
+script = ExtResource("1_tmpl")
+
+[node name="PlayerSM" type="Node" parent="."]
