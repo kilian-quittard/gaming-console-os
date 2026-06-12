@@ -29,6 +29,9 @@ var _mats := {}             # cache Color -> StandardMaterial3D
 var cursor3: MeshInstance3D = null   # surbrillance de la case en édition
 var ghost3: MeshInstance3D = null    # aperçu translucide de la tuile active
 var _world_sig := -1                 # signature du grid (rebuild si changement)
+var _rebuild_t := 0.0                # throttle de reconstruction (édition)
+var cam_focus3 := Vector3.ZERO       # point regardé par la caméra d'ÉDITION (libre)
+var _focus_init := false
 
 const P3_CATS := [
 	{"name": "Sol",     "tiles": [FLOOR]},
@@ -241,30 +244,59 @@ func _process(delta: float) -> void:
 		return
 	if app.mode == "edit":
 		if not cam3.current: cam3.current = true
-		# rebuild du monde si la grille a changé (signature bon marché)
-		var sig := 0
-		for k in app.grid:
-			sig = (sig + (k.x * 73856093) ^ (k.y * 19349663) ^ (int(app.grid[k]) * 83492791)) & 0x7FFFFFFF
-		sig = (sig + app.cell_cfg.size() * 7919) & 0x7FFFFFFF
-		if sig != _world_sig:
-			_world_sig = sig
-			_build_world()
-			if player3: player3.visible = false
+		# rebuild si la grille a changé — throttlé (la peinture mute chaque frame)
+		_rebuild_t -= delta
+		if _rebuild_t <= 0.0:
+			_rebuild_t = 0.15
+			var sig := 0
+			for k in app.grid:
+				sig = (sig + (k.x * 73856093) ^ (k.y * 19349663) ^ (int(app.grid[k]) * 83492791)) & 0x7FFFFFFF
+			sig = (sig + app.cell_cfg.size() * 7919) & 0x7FFFFFFF
+			if sig != _world_sig:
+				_world_sig = sig
+				_build_world()
+				if player3: player3.visible = false
 		# curseur 3D sur la case visée (posé au sommet de la colonne)
 		var c: Vector2i = app.cursor
 		var h := maxf(_cell_h(c), 0.0)
 		cursor3.visible = true
 		cursor3.position = Vector3(float(c.x) + 0.5, h + 0.13, float(c.y) + 0.5)
 		ghost3.visible = false
-		# caméra d'édition : au-dessus/derrière le curseur (R2 = dézoom)
+		# CAMÉRA LIBRE (jamais asservie au curseur : sinon boucle caméra↔raycast).
+		# Pan : pousser le pointeur contre un bord (stick/flèches). R2 = dézoom.
+		if not _focus_init:
+			# entre en édition : curseur sur le spawn (ou 1re tuile) → caméra sur le niveau
+			var sp := _find(SPAWN)
+			if sp == Vector2i(-1, -1) and not app.grid.is_empty():
+				sp = app.grid.keys()[0]
+			if sp != Vector2i(-1, -1):
+				app.cursor = sp
+				c = sp
+			cam_focus3 = Vector3(float(c.x) + 0.5, 0.0, float(c.y) + 0.5)
+			_focus_init = true
+			cam3.position = cam_focus3 + Vector3(0, 9.0, 7.0)
+			cam3.look_at(cam_focus3)
+			# aligne le pointeur sur le curseur (sinon le 1er input le téléporte)
+			app.aim = cam3.unproject_position(cam_focus3)
+		var vp := get_viewport_rect().size
+		var margin := 40.0
+		var push: Vector2 = app._stick() + Vector2(app._dpad_held())
+		var pan := Vector3.ZERO
+		if app.aim.x < margin and push.x < -0.2: pan.x = -1.0
+		elif app.aim.x > vp.x - margin and push.x > 0.2: pan.x = 1.0
+		if app.aim.y < app.TOPBAR + margin and push.y < -0.2: pan.z = -1.0
+		elif app.aim.y > vp.y - app.BOTTOM - margin and push.y > 0.2: pan.z = 1.0
+		cam_focus3 += pan * 11.0 * delta
+		cam_focus3.x = clampf(cam_focus3.x, 0.0, float(app.cols))
+		cam_focus3.z = clampf(cam_focus3.z, 0.0, float(app.rows))
 		var zoom := 22.0 if app.dezoom else 9.0
-		var target := Vector3(float(c.x) + 0.5, 0.0, float(c.y) + 0.5)
-		var cpos := target + Vector3(0, zoom * 0.95, zoom * 0.75)
-		cam3.position = cam3.position.lerp(cpos, clampf(8.0 * delta, 0.0, 1.0))
-		cam3.look_at(target)
+		var cpos := cam_focus3 + Vector3(0, zoom * 0.95, zoom * 0.75)
+		cam3.position = cam3.position.lerp(cpos, clampf(10.0 * delta, 0.0, 1.0))
+		cam3.look_at(cam_focus3)
 	else:
 		cursor3.visible = false
 		ghost3.visible = false
+		_focus_init = false
 
 
 # =================================================== simulation
