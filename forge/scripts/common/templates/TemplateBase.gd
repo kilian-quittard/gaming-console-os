@@ -179,6 +179,13 @@ func seed_demo() -> void: pass                   # contenu du nouveau projet
 func wants_room_camera() -> bool: return false   # caméra par salles (top-down)
 func debug_text() -> String: return ""           # texte debug HUD (ex: sonic)
 func play_hud_text() -> String: return ""        # texte HUD en jeu (ex: missiles)
+func wants_2d_world() -> bool: return true       # false = monde rendu en 3D (curseur 2D masqué)
+
+
+# mapping écran -> case de grille (la 3D override avec un raycast caméra)
+func screen_to_cell(sp: Vector2) -> Vector2i:
+	var w: Vector2 = app._s2w(sp)
+	return Vector2i(int(floor(w.x / CELL)), int(floor(w.y / CELL)))
 func jump_pressed() -> void: pass                # entrées transmises par ForgeApp
 func jump_released() -> void: pass
 func _wants_parallax() -> bool: return true      # false = fond plat (top-down)

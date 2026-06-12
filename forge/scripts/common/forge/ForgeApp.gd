@@ -1461,9 +1461,9 @@ func _insp_click(dir: int) -> bool:
 
 func _sync_cursor_from_aim() -> void:
 	if _insp_hover(): return   # pointeur sur l'inspecteur : on n'édite pas dessous
-	var w := _s2w(aim)
-	cursor.x = clampi(int(floor(w.x / CELL)), 0, cols - 1)
-	cursor.y = clampi(int(floor(w.y / CELL)), 0, rows - 1)
+	var c: Vector2i = tmpl.screen_to_cell(aim)
+	cursor.x = clampi(c.x, 0, cols - 1)
+	cursor.y = clampi(c.y, 0, rows - 1)
 
 
 func _edge_pan(area: Rect2, delta: float, push: Vector2) -> bool:
@@ -1798,7 +1798,7 @@ func _draw() -> void:
 	if mode == "play" and tmpl.wants_room_camera() and cur_room >= 0 and cur_room < rooms.size():
 		_draw_room_mask(vp)
 	# édition/jeu : le monde est rendu par le template (derrière), ici le chrome par-dessus
-	if mode == "edit" and not radial_open and not bg_edit and get("hide_editor_chrome") != true:
+	if mode == "edit" and not radial_open and not bg_edit and get("hide_editor_chrome") != true and tmpl.wants_2d_world():
 		_draw_edit_cursor()
 	_draw_topbar(vp)
 	_draw_hints(vp)

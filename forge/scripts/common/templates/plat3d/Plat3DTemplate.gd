@@ -26,6 +26,9 @@ var player3: MeshInstance3D = null
 var mesh_by_cell := {}      # Vector2i -> Array[Node3D] (libérés si la tuile disparaît)
 var coin_nodes := []        # pour l'animation de rotation
 var _mats := {}             # cache Color -> StandardMaterial3D
+var cursor3: MeshInstance3D = null   # surbrillance de la case en édition
+var ghost3: MeshInstance3D = null    # aperçu translucide de la tuile active
+var _world_sig := -1                 # signature du grid (rebuild si changement)
 
 const P3_CATS := [
 	{"name": "Sol",     "tiles": [FLOOR]},
@@ -38,7 +41,21 @@ const P3_CATS := [
 ]
 func categories() -> Array: return P3_CATS
 func default_hp() -> int: return 3
-func _wants_parallax() -> bool: return false   # édition top-down : fond plat (vide = trou)
+func _wants_parallax() -> bool: return false
+func wants_2d_world() -> bool: return false    # ÉDITION AUSSI en 3D (curseur 2D masqué)
+
+
+# souris/pointeur -> case : raycast caméra sur le plan du sol (y = 0)
+func screen_to_cell(sp: Vector2) -> Vector2i:
+	if cam3 == null or not cam3.current:
+		return super(sp)
+	var from := cam3.project_ray_origin(sp)
+	var dir := cam3.project_ray_normal(sp)
+	if absf(dir.y) < 0.0001: return app.cursor
+	var t := -from.y / dir.y
+	if t < 0.0: return app.cursor
+	var hit := from + dir * t
+	return Vector2i(int(floor(hit.x)), int(floor(hit.z)))
 
 
 func play_badges() -> Array:
@@ -107,6 +124,22 @@ func _ready() -> void:
 	cam3 = Camera3D.new()
 	cam3.current = false
 	world3.add_child(cam3)
+	# curseur d'édition : cadre translucide sur la case visée
+	cursor3 = MeshInstance3D.new()
+	var cb := BoxMesh.new(); cb.size = Vector3(1.02, 0.25, 1.02)
+	cursor3.mesh = cb
+	var cmat := StandardMaterial3D.new()
+	cmat.albedo_color = Color(1.0, 0.62, 0.07, 0.55)
+	cmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	cursor3.material_override = cmat
+	world3.add_child(cursor3)
+	ghost3 = MeshInstance3D.new()
+	ghost3.mesh = cb
+	var gmat := StandardMaterial3D.new()
+	gmat.albedo_color = Color(1, 1, 1, 0.25)
+	gmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	ghost3.material_override = gmat
+	world3.add_child(ghost3)
 
 
 func _mat(c: Color) -> StandardMaterial3D:
@@ -184,6 +217,7 @@ func _build_world() -> void:
 func start_play(from_cursor: bool) -> void:
 	super(from_cursor)
 	_build_world()
+	_world_sig = -1   # l'édition re-rebuildera après les mutations du test
 	pos3 = Vector3(float(spawn_cell.x) + 0.5, 0.6, float(spawn_cell.y) + 0.5)
 	vel3 = Vector3.ZERO
 	move_mode = "3d"; jb3 = 0.0
@@ -193,12 +227,44 @@ func start_play(from_cursor: bool) -> void:
 
 func stop_play() -> void:
 	super()
-	cam3.current = false
 	if player3: player3.visible = false
 
 
 func jump_pressed() -> void:
 	if not dead and not won: jb3 = 0.12
+
+
+func _process(delta: float) -> void:
+	super(delta)
+	if app == null or app.screen != "edit":
+		if cam3 and cam3.current: cam3.current = false
+		return
+	if app.mode == "edit":
+		if not cam3.current: cam3.current = true
+		# rebuild du monde si la grille a changé (signature bon marché)
+		var sig := 0
+		for k in app.grid:
+			sig = (sig + (k.x * 73856093) ^ (k.y * 19349663) ^ (int(app.grid[k]) * 83492791)) & 0x7FFFFFFF
+		sig = (sig + app.cell_cfg.size() * 7919) & 0x7FFFFFFF
+		if sig != _world_sig:
+			_world_sig = sig
+			_build_world()
+			if player3: player3.visible = false
+		# curseur 3D sur la case visée (posé au sommet de la colonne)
+		var c: Vector2i = app.cursor
+		var h := maxf(_cell_h(c), 0.0)
+		cursor3.visible = true
+		cursor3.position = Vector3(float(c.x) + 0.5, h + 0.13, float(c.y) + 0.5)
+		ghost3.visible = false
+		# caméra d'édition : au-dessus/derrière le curseur (R2 = dézoom)
+		var zoom := 22.0 if app.dezoom else 9.0
+		var target := Vector3(float(c.x) + 0.5, 0.0, float(c.y) + 0.5)
+		var cpos := target + Vector3(0, zoom * 0.95, zoom * 0.75)
+		cam3.position = cam3.position.lerp(cpos, clampf(8.0 * delta, 0.0, 1.0))
+		cam3.look_at(target)
+	else:
+		cursor3.visible = false
+		ghost3.visible = false
 
 
 # =================================================== simulation
@@ -333,7 +399,8 @@ func _sweep_removed_meshes() -> void:
 
 # =================================================== rendu 2D
 func _draw() -> void:
-	# en TEST : le monde est rendu par la caméra 3D, rien à dessiner en 2D
-	if app != null and app.screen == "edit" and app.mode == "play":
+	# le monde est TOUJOURS rendu par la caméra 3D (édition incluse) ;
+	# on garde seulement le calcul de vue pour le chrome 2D
+	if app == null or app.screen != "edit":
 		return
-	super()
+	app._compute_view()
