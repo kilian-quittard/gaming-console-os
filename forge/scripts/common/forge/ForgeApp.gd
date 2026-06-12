@@ -119,6 +119,21 @@ var sel := 0
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
 
+# ---- MODE JEU COMPLET (campagne) : écran titre → zones enchaînées → fin ----
+var game_mode := false      # true = on joue le jeu (pas un test d'éditeur)
+var game_stage := ""        # title | select | complete | over | end
+var game_sel := 0           # sélection dans l'écran de zones
+var game_lives := 3         # vies de la zone en cours
+var game_zone_i := 0        # index de la zone jouée (dans level_ids())
+var game_unlocked := 1      # zones débloquées (persisté dans le projet)
+var game_win_t := 0.0       # délai de fête avant l'écran "zone terminée"
+var game_over_t := 0.0      # délai avant l'écran game over (laisse l'anim de mort)
+var game_total_time := 0.0  # stats cumulées du run
+var game_total_coins := 0
+var game_zone_time := 0.0   # stats de la zone qui vient d'être finie (écran complete)
+var game_zone_coins := 0
+var game_zone_ctotal := 0
+
 # gamedash / screenedit (vue d'ensemble projet + éditeur d'écrans)
 var dash_sel := 0
 var edit_screen_key := ""
@@ -223,6 +238,9 @@ func _load_template(kind: String) -> void:
 	add_child(tmpl)
 	gfx.attach_world(tmpl)   # skin + pixelisation par-dessus le monde
 	tmpl.setup(self)
+	# mode jeu : chaque mort réelle coûte une vie (reconnecté à chaque swap de genre)
+	tmpl.player_died.connect(func() -> void:
+		if game_mode: _game_player_died())
 	gfx.apply()
 	# adapte cat_pal au nombre de catégories du genre
 	cat_pal = []
@@ -332,6 +350,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if screen == "template":   _tmpl_input(e); return
 	if screen == "gamedash":   _gamedash_input(e); return
 	if screen == "screenedit": _screenedit_input(e); return
+	if screen == "game":       _game_input(e); return
 	if lvl_rename: _rename_input(e); return
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
@@ -453,10 +472,14 @@ func _play_input(e: InputEvent) -> void:
 	elif _is_btn(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A], false):
 		tmpl.jump_released()
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START, JOY_BUTTON_B]):
-		_stop_play()
+		if game_mode: _game_quit()        # en mode jeu : retour au tableau de bord
+		else: _stop_play()
 	elif _press(e, [KEY_M], [JOY_BUTTON_BACK]):
 		map_open = not map_open; queue_redraw()
 	elif _press(e, [KEY_R], [JOY_BUTTON_Y]):
+		if game_mode:
+			_game_launch_zone(game_zone_i)   # recommence la zone (vies remises)
+			return
 		# rejouer = nouvelle partie : restaure l'état auteur puis re-snapshot
 		_restore_play_world()
 		_backup_level_for_play(cur_level)
@@ -464,9 +487,10 @@ func _play_input(e: InputEvent) -> void:
 		tmpl.start_play(tmpl.last_from_cursor)
 
 
-# cartes du dash : un NIVEAU par carte + "+ Nouveau" + les écrans de jeu
+# cartes du dash : JOUER + un NIVEAU par carte + "+ Nouveau" + les écrans de jeu
 func _dash_entries() -> Array:
 	var out := []
+	out.append({"label": "▶  Jouer le jeu", "key": "playgame"})
 	for id in level_ids():
 		out.append({"label": level_name(id), "key": "level", "id": id})
 	out.append({"label": "+ Nouvelle zone", "key": "newlevel"})
@@ -492,6 +516,8 @@ func _gamedash_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
 		var ent: Dictionary = entries[dash_sel]
 		match str(ent["key"]):
+			"playgame":
+				_game_start()
 			"level":
 				_switch_level(str(ent["id"]))
 				states.change_state("EditorState")
@@ -501,6 +527,96 @@ func _gamedash_input(e: InputEvent) -> void:
 			_:
 				edit_screen_key = str(ent["key"]); edit_prop_sel = 0; text_edit_mode = false
 				states.change_state("ScreenEditState")
+
+
+# ============================================================ MODE JEU COMPLET
+# Le projet se JOUE comme un vrai jeu : titre → sélection de zone (progression
+# débloquée au fil des victoires) → zones enchaînées → game over / écran de fin.
+func _game_start() -> void:
+	if mode == "play": _stop_play()
+	game_mode = false
+	game_stage = "title"
+	game_sel = 0
+	game_total_time = 0.0; game_total_coins = 0
+	screen = "game"
+	queue_redraw()
+
+
+func _game_input(e: InputEvent) -> void:
+	match game_stage:
+		"title":
+			if _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A, JOY_BUTTON_START]):
+				game_stage = "select"; game_sel = 0; _play("coin"); queue_redraw()
+			elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+				_game_quit()
+		"select":
+			var ids := level_ids()
+			if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+				game_sel = mini(game_sel + 1, mini(game_unlocked, ids.size()) - 1); queue_redraw()
+			elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+				game_sel = maxi(game_sel - 1, 0); queue_redraw()
+			elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+				_game_launch_zone(game_sel)
+			elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+				game_stage = "title"; queue_redraw()
+		"complete":
+			if _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A, JOY_BUTTON_START]):
+				if game_zone_i + 1 < level_ids().size():
+					_game_launch_zone(game_zone_i + 1)
+				else:
+					game_stage = "end"; _play("win"); queue_redraw()
+		"over":
+			if _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+				_game_launch_zone(game_zone_i)      # réessaye la même zone
+			elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+				game_stage = "select"; queue_redraw()
+		"end":
+			if _press(e, [KEY_SPACE, KEY_ENTER, KEY_ESCAPE], [JOY_BUTTON_A, JOY_BUTTON_B, JOY_BUTTON_START]):
+				_game_quit()
+
+
+func _game_launch_zone(i: int) -> void:
+	var ids := level_ids()
+	if i < 0 or i >= ids.size(): return
+	game_zone_i = i
+	game_lives = 3
+	game_win_t = 0.0; game_over_t = 0.0
+	if mode == "play": _stop_play()
+	_switch_level(str(ids[i]))
+	screen = "edit"          # le monde/HUD se dessinent via le chemin play normal
+	_start_play(false)
+	game_mode = true
+	_set_toast("Zone %d/%d — %s" % [i + 1, ids.size(), level_name(cur_level)])
+	queue_redraw()
+
+
+# appelé par _process quand la zone est gagnée en mode jeu (après la fête)
+func _game_zone_won() -> void:
+	game_zone_time = tmpl.play_time
+	game_zone_coins = tmpl.coins_got
+	game_zone_ctotal = tmpl.coins_total
+	game_total_time += tmpl.play_time
+	game_total_coins += tmpl.coins_got
+	if game_zone_i + 1 >= game_unlocked:
+		game_unlocked = mini(game_zone_i + 2, level_ids().size() + 1)
+		_save_current()      # la progression débloquée est persistée
+	_stop_play(); game_mode = false
+	screen = "game"; game_stage = "complete"
+	queue_redraw()
+
+
+func _game_player_died() -> void:
+	game_lives -= 1
+	if game_lives <= 0:
+		game_over_t = 0.8    # laisse l'anim de mort se jouer avant l'écran
+	queue_redraw()
+
+
+func _game_quit() -> void:
+	if mode == "play": _stop_play()
+	game_mode = false
+	game_stage = ""
+	states.change_state("GameDashState")
 
 
 func _rename_input(e: InputEvent) -> void:
@@ -1152,6 +1268,7 @@ func _new_project(template_id: String) -> void:
 	# reset AVANT le seed : le seed peut poser salles/props/thème sans être écrasé
 	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear(); rooms.clear(); cur_room = -1
 	levels = {}; cur_level = "1"; warp_cd = 0.0
+	game_unlocked = 1; game_mode = false; game_stage = ""
 	tmpl.seed_demo()
 	# défaut par genre : top-down a les cœurs activés (3), platformer non
 	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
@@ -1187,6 +1304,8 @@ func _open_project(p: Dictionary) -> void:
 		_set_toast("Ouverture impossible"); return
 	var pr = data.get("props", {})
 	level_props = pr if typeof(pr) == TYPE_DICTIONARY else {}
+	game_unlocked = maxi(1, int(data.get("progress", {}).get("unlocked", 1)))
+	game_mode = false; game_stage = ""
 	screens = {}
 	var sc = data.get("screens", {})
 	if typeof(sc) == TYPE_DICTIONARY:
@@ -1253,7 +1372,8 @@ func _save_current() -> void:
 		lv[id] = _serialize_level(all_levels[id])
 	var d := {"name": cur_project, "dim": cur_dim, "template": cur_template,
 		"props": level_props, "screens": screens,
-		"levels": lv, "cur_level": cur_level}
+		"levels": lv, "cur_level": cur_level,
+		"progress": {"unlocked": game_unlocked}}
 	if ProjectStore.save(d):
 		_set_toast("Sauvegardé : %s" % cur_project)
 	else:
@@ -1339,9 +1459,28 @@ func _process(delta: float) -> void:
 	if screen == "gamedash":
 		queue_redraw()
 		return
+	if screen == "game":
+		queue_redraw()   # écrans animés (titre clignotant)
+		return
 	if ai_open:
 		queue_redraw()
 		return
+	# mode jeu : victoire de zone (après une courte fête) et game over différé
+	if game_mode and mode == "play":
+		if tmpl.won and game_win_t <= 0.0:
+			game_win_t = 1.4
+		if game_win_t > 0.0:
+			game_win_t -= delta
+			if game_win_t <= 0.0:
+				_game_zone_won()
+				return
+		if game_over_t > 0.0:
+			game_over_t -= delta
+			if game_over_t <= 0.0:
+				_stop_play(); game_mode = false
+				screen = "game"; game_stage = "over"
+				_play("death"); queue_redraw()
+				return
 	if screen != "edit" or mode == "play":
 		return
 	_auto_resize_cols()
@@ -1806,6 +1945,7 @@ func _draw() -> void:
 	if screen == "template":   _draw_template(vp); return
 	if screen == "gamedash":   _draw_gamedash(vp); return
 	if screen == "screenedit": _draw_screenedit(vp); return
+	if screen == "game":       _draw_game(vp); return
 	# jeu en mode salles : masque tout ce qui dépasse la salle courante (letterbox)
 	if mode == "play" and tmpl.wants_room_camera() and cur_room >= 0 and cur_room < rooms.size():
 		_draw_room_mask(vp)
@@ -1826,7 +1966,12 @@ func _draw() -> void:
 	if menu_open: _draw_menu(vp)
 	if ai_open: _draw_ai_panel(vp)
 	if toast_t > 0.0: _draw_toast(vp)
-	if mode == "play" and tmpl.won: _draw_banner(vp)
+	if mode == "play" and tmpl.won:
+		if game_mode:
+			# fête courte avant l'écran "zone terminée"
+			_ctext(ThemeDB.fallback_font, vp.x * 0.5, vp.y * 0.4, "ZONE TERMINÉE !", Color("2ecc71"), 44)
+		else:
+			_draw_banner(vp)
 	if show_fps:
 		var fps := Engine.get_frames_per_second()
 		var fcol := Color("2ecc71") if fps >= 55 else (Color("f39c12") if fps >= 30 else Color("e74c3c"))
@@ -1949,7 +2094,11 @@ func _draw_topbar(vp: Vector2) -> void:
 		_text(f, Vector2(x + 8, 22), tmpl.tile_name(_active_tile()), Color("f39c12"), 14)
 		_text(f, Vector2(x + 8, 42), "Curseur: %s" % cursor_mode, Color(1, 1, 1, 0.6), 12)
 	else:
-		_text(f, Vector2(16, 34), "FORGE — TEST", Color("2ecc71"), 22)
+		if game_mode:
+			_text(f, Vector2(16, 34), cur_project.to_upper(), Color("f39c12"), 22)
+			_text(f, Vector2(16, 52), "%s   ♥ ×%d" % [level_name(cur_level), game_lives], Color(1, 1, 1, 0.75), 13)
+		else:
+			_text(f, Vector2(16, 34), "FORGE — TEST", Color("2ecc71"), 22)
 		var need_coins: int = int(level_props.get("win_coins", 0))
 		var coin_str := "Pièces: %d/%d" % [tmpl.coins_got, tmpl.coins_total]
 		if need_coins > 0:
@@ -2189,6 +2338,62 @@ func _draw_template(vp: Vector2) -> void:
 	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A créer    B retour", Color(1, 1, 1, 0.6), 16)
 
 
+# ============================================================= MODE JEU (écrans)
+func _draw_game(vp: Vector2) -> void:
+	var full := Rect2(Vector2.ZERO, vp)
+	var st := _screen_style("title")
+	var f := ThemeDB.fallback_font
+	match game_stage:
+		"title":
+			var data: Dictionary = screens.get("title", ScreenArt.empty_screen())
+			var ctx := {"accent": st.accent, "bg": BG_THEMES[st.bg][0],
+				"title_text": cur_project, "subtitle": st.subtitle, "anim_t": anim_t}
+			ScreenArt.draw_title(self, full, data, ctx)
+			_ctext(f, vp.x * 0.5, vp.y - 18, "A jouer    B quitter", Color(1, 1, 1, 0.4), 13)
+		"select":
+			draw_rect(full, BG_THEMES[st.bg][0])
+			_ctext(f, vp.x * 0.5, 70, cur_project.to_upper(), st.accent, 30)
+			_ctext(f, vp.x * 0.5, 104, "Choisis une zone", Color(1, 1, 1, 0.6), 15)
+			var ids := level_ids()
+			for i in ids.size():
+				var y := 150.0 + i * 52.0
+				var locked := i >= game_unlocked
+				var r := Rect2(vp.x * 0.5 - 220, y, 440, 42)
+				if i == game_sel and not locked:
+					draw_rect(r, Color(1, 1, 1, 0.10))
+					draw_rect(r, st.accent, false, 2.0)
+				var nm := level_name(str(ids[i]))
+				if locked:
+					_ctext(f, vp.x * 0.5, y + 28, "🔒  %s" % nm, Color(1, 1, 1, 0.25), 17)
+				else:
+					_ctext(f, vp.x * 0.5, y + 28, "%d. %s" % [i + 1, nm], Color.WHITE if i == game_sel else Color(1, 1, 1, 0.6), 17)
+			_ctext(f, vp.x * 0.5, vp.y - 18, "▲▼ choisir    A jouer    B retour", Color(1, 1, 1, 0.4), 13)
+		"complete":
+			draw_rect(full, BG_THEMES[st.bg][0])
+			_ctext(f, vp.x * 0.5, vp.y * 0.32, "ZONE TERMINÉE !", Color("2ecc71"), 46)
+			_ctext(f, vp.x * 0.5, vp.y * 0.32 + 44, level_name(cur_level), Color(1, 1, 1, 0.7), 18)
+			var mins := int(game_zone_time) / 60
+			_ctext(f, vp.x * 0.5, vp.y * 0.52,
+				"Temps  %d:%05.2f      Pièces  %d/%d" % [mins, fmod(game_zone_time, 60.0), game_zone_coins, game_zone_ctotal],
+				Color("f1c40f"), 19)
+			var last := game_zone_i + 1 >= level_ids().size()
+			_ctext(f, vp.x * 0.5, vp.y * 0.72, "A  %s" % ("Voir la fin" if last else "Zone suivante →"), Color.WHITE, 17)
+		"over":
+			draw_rect(full, Color("12060a"))
+			_ctext(f, vp.x * 0.5, vp.y * 0.4, "GAME OVER", Color("e74c3c"), 52)
+			_ctext(f, vp.x * 0.5, vp.y * 0.6, "A Réessayer      B Zones", Color(1, 1, 1, 0.7), 17)
+		"end":
+			draw_rect(full, BG_THEMES[st.bg][0])
+			_ctext(f, vp.x * 0.5, vp.y * 0.30, "JEU TERMINÉ !", st.accent, 52)
+			_ctext(f, vp.x * 0.5, vp.y * 0.30 + 46, cur_project.to_upper(), Color.WHITE, 22)
+			var tm := int(game_total_time) / 60
+			_ctext(f, vp.x * 0.5, vp.y * 0.52,
+				"Temps total  %d:%05.2f      Pièces  %d" % [tm, fmod(game_total_time, 60.0), game_total_coins],
+				Color("f1c40f"), 19)
+			if fmod(anim_t, 1.0) < 0.65:
+				_ctext(f, vp.x * 0.5, vp.y * 0.74, "Merci d'avoir joué  —  A retour", Color(1, 1, 1, 0.7), 16)
+
+
 # ============================================================= GAMEDASH
 func _draw_gamedash(vp: Vector2) -> void:
 	_shell_bg(vp, false)   # pas de gros titre FORGE : les cartes occupent tout l'écran
@@ -2209,6 +2414,15 @@ func _draw_gamedash(vp: Vector2) -> void:
 		var sel_i := i == dash_sel
 		var pr := Rect2(x, y, card_w, prev_h)
 		match str(ent["key"]):
+			"playgame":
+				var stt := _screen_style("title")
+				draw_rect(pr, BG_THEMES[stt.bg][0].darkened(0.2))
+				var cc := pr.position + pr.size * 0.5
+				draw_colored_polygon(PackedVector2Array([
+					cc + Vector2(-14, -20), cc + Vector2(22, 0), cc + Vector2(-14, 20)]), stt.accent)
+				_ctext(f, cc.x, pr.position.y + pr.size.y * 0.82,
+					"Progression : %d/%d zones" % [mini(game_unlocked, level_ids().size()), level_ids().size()],
+					Color(1, 1, 1, 0.55), 12)
 			"level":
 				_draw_level_preview(pr, str(ent["id"]))
 			"newlevel":
