@@ -18,6 +18,7 @@ var vel3 := Vector3.ZERO
 var grounded3 := false
 var jb3 := 0.0              # jump buffer
 var move_mode := "3d"       # "3d" | "x" (2.5D le long de X) | "z"
+var cam_yaw := 0.0          # cap caméra third-person (mode 3D)
 var lock_coord := 0.0       # coordonnée verrouillée en 2.5D (z ou x, en unités)
 var enemies3 := []          # {node, x, z, dir, min, max}
 var world3: Node3D = null
@@ -283,9 +284,9 @@ func start_play(from_cursor: bool) -> void:
 	_world_sig = -1   # l'édition re-rebuildera après les mutations du test
 	pos3 = Vector3(float(spawn_cell.x) + 0.5, 0.6, float(spawn_cell.y) + 0.5)
 	vel3 = Vector3.ZERO
-	move_mode = "3d"; jb3 = 0.0
+	move_mode = "3d"; jb3 = 0.0; cam_yaw = 0.0
 	cam3.current = true
-	cam3.position = pos3 + Vector3(0, 5.5, 7.0)
+	cam3.position = pos3 + Vector3(sin(cam_yaw), 0.0, cos(cam_yaw)) * 6.0 + Vector3(0, 3.0, 0)
 
 
 func stop_play() -> void:
@@ -387,6 +388,8 @@ func _physics_process(delta: float) -> void:
 		MODE3D:
 			if move_mode != "3d":
 				move_mode = "3d"; app._play("key")
+				var o := cam3.position - pos3
+				cam_yaw = atan2(o.x, o.z)   # continuité caméra au changement de mode
 	# entrées selon le mode
 	var dx := float(_dir_x()); var dz := float(_dir_y())
 	match move_mode:
@@ -397,8 +400,17 @@ func _physics_process(delta: float) -> void:
 			vel3.z = -dx * SPEED3
 			vel3.x = clampf((lock_coord - pos3.x) * 8.0, -SPEED3, SPEED3)
 		_:
-			vel3.x = dx * SPEED3
-			vel3.z = dz * SPEED3
+			# THIRD PERSON : stick haut = s'éloigner de la caméra
+			var off := Vector3(sin(cam_yaw), 0.0, cos(cam_yaw))   # caméra derrière = +off
+			var fwd := -off
+			var right := fwd.cross(Vector3.UP)
+			var mv := fwd * (-dz) + right * dx
+			if mv.length() > 0.1:
+				mv = mv.normalized()
+				# la caméra glisse derrière la direction de course
+				cam_yaw = lerp_angle(cam_yaw, atan2(-mv.x, -mv.z), clampf(2.6 * delta, 0.0, 1.0))
+			vel3.x = mv.x * SPEED3
+			vel3.z = mv.z * SPEED3
 	# saut + gravité
 	if grounded3 and jb3 > 0.0:
 		vel3.y = JUMP3; jb3 = 0.0; grounded3 = false
@@ -459,9 +471,11 @@ func _update_camera(delta: float) -> void:
 	match move_mode:
 		"x": target = Vector3(pos3.x, pos3.y + 2.2, lock_coord + 8.5)
 		"z": target = Vector3(lock_coord + 8.5, pos3.y + 2.2, pos3.z)
-		_:   target = pos3 + Vector3(0, 5.5, 7.0)
+		_:
+			var off := Vector3(sin(cam_yaw), 0.0, cos(cam_yaw))
+			target = pos3 + off * 6.0 + Vector3(0, 3.0, 0)
 	cam3.position = cam3.position.lerp(target, clampf(7.0 * delta, 0.0, 1.0))
-	cam3.look_at(pos3 + Vector3(0, 0.6, 0))
+	cam3.look_at(pos3 + Vector3(0, 1.0, 0))
 
 
 func _update_enemies3(delta: float) -> void:
