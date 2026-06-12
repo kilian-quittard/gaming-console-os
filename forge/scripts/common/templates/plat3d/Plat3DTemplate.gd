@@ -502,8 +502,9 @@ func _physics_process(delta: float) -> void:
 		_interactions(delta)
 	_sweep_removed_meshes()
 	_update_enemies3(delta)
-	# rendu
+	# rendu (et retour à la verticale en douceur après une planète)
 	player3.position = pos3 + Vector3(0, 0.15, 0)
+	player3.basis = player3.basis.slerp(Basis.IDENTITY, clampf(8.0 * delta, 0.0, 1.0))
 	_update_camera(delta)
 	for cn in coin_nodes:
 		if is_instance_valid(cn): cn.rotate_y(delta * 3.0)
@@ -512,12 +513,19 @@ func _physics_process(delta: float) -> void:
 
 # pas de simulation en gravité radiale. true = géré (saute la physique normale).
 func _planet_step(delta: float, yaw_in: float) -> bool:
-	# planète d'influence la plus proche
-	var pl = null; var bd := 1e9
-	for p in planets3:
-		var d: float = (pos3 - p.c).length()
-		if d < p.r + 6.0 and d < bd: bd = d; pl = p
-	if on_planet != null: pl = on_planet
+	var pl = on_planet
+	if pl == null:
+		# en l'air / libre : le champ DOMINANT gagne = la surface la plus proche.
+		# Permet le HANDOFF : sauter d'une planète vers une autre (si proche) ou
+		# retomber en gravité normale si du terrain est plus près.
+		var bs := 3.8   # portée max d'un champ (distance à la SURFACE)
+		for p in planets3:
+			var sd: float = (pos3 - p.c).length() - p.r
+			if sd < bs: bs = sd; pl = p
+		if pl != null:
+			var sup := _support()
+			if sup > -100.0 and (pos3.y - sup) * 0.85 < bs:
+				pl = null   # le sol normal est plus proche → gravité normale
 	if pl == null: return false
 	var up: Vector3 = (pos3 - pl.c).normalized()
 	if on_planet != null:
@@ -556,6 +564,11 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 	var ct: Vector3 = pos3 + up * 2.6 - pl_head * 6.0
 	cam3.position = cam3.position.lerp(ct, clampf(7.0 * delta, 0.0, 1.0))
 	cam3.look_at(pos3 + up * 0.8, up)
+	# le PERSO s'oriente selon la surface : pieds vers le centre, face au cap
+	var fwd_o := (pl_head - up * pl_head.dot(up))
+	if fwd_o.length() > 0.05:
+		var tb := Basis.looking_at(fwd_o.normalized(), up)
+		player3.basis = player3.basis.slerp(tb.orthonormalized(), clampf(12.0 * delta, 0.0, 1.0))
 	# interactions/rendu communs
 	player3.position = pos3 + up * 0.15
 	ppos = Vector2(pos3.x * CELL - PSIZE.x * 0.5, pos3.z * CELL - PSIZE.y * 0.5)
