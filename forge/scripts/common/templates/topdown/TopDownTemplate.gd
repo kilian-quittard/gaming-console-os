@@ -201,13 +201,13 @@ func _td_sword() -> void:
 		var esz: float = BOSS_SIZE if en.type == "boss" else float(ESIZE)
 		if hit.intersects(Rect2(en.pos, Vector2(esz, esz))):
 			_td_damage(en)
-	app._play("stomp")
+	app._play("sword")
 
 
 func _td_shoot() -> void:
 	var c := ppos + PSIZE * 0.5
 	pshots.append({"pos": c + face * PSIZE.x * 0.5, "vel": face * TD_SHOT_SPEED, "alive": true})
-	app._play("jump")
+	app._play("shoot")
 
 
 func _td_update_pshots(delta: float) -> void:

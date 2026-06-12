@@ -136,6 +136,7 @@ var last_from_cursor := false
 var testing := false
 var test_dir := 0
 var time_left := 0.0       # chrono restant (0 = pas de limite)
+var play_time := 0.0       # temps écoulé depuis le début du test (stats de victoire)
 var air_t := 8.0           # réserve d'air (noyade, géré par le platformer ; lu par le HUD)
 var hearts := 0            # PV courants (0 = système désactivé → mort instantanée)
 var max_hearts := 0
@@ -250,6 +251,7 @@ func start_play(from_cursor: bool) -> void:
 	dead = false; won = false; death_t = 0.0; has_key = false; keys = {}
 	pvel = Vector2.ZERO
 	time_left = _time_limit()
+	play_time = 0.0
 	air_t = AIR_MAX
 	pinv = 0.0; dashing = 0.0; dash_cd = 0.0; pos_hist = []
 	max_hearts = int(app.level_props.get("player_hp", default_hp()))
@@ -329,7 +331,7 @@ func _start_dash(dir: Vector2) -> void:
 	dashing = DASH_DUR; dash_cd = DASH_CD; pinv = DASH_IFRAME
 	dash_dir = dir.normalized()
 	app._emit(ppos + PSIZE * 0.5, 8, Color("9be7ff"), 200.0, 0.3, false, 3.0)
-	app._shake(2.0, 0.08); app._play("jump")
+	app._shake(2.0, 0.08); app._play("dash")
 
 
 func _process(_delta: float) -> void:
@@ -665,7 +667,7 @@ func _die() -> void:
 	if max_hearts > 0 and hearts > 1:
 		hearts -= 1; pinv = HURT_IFRAME
 		app._emit(ppos + PSIZE * 0.5, 10, Color("e74c3c"), 220.0, 0.4, false, 4.0)
-		app._shake(5.0, 0.2); Input.start_joy_vibration(0, 0.5, 0.3, 0.15); app._play("death")
+		app._shake(5.0, 0.2); Input.start_joy_vibration(0, 0.5, 0.3, 0.15); app._play("hurt")
 		return
 	_kill()
 
@@ -681,6 +683,7 @@ func _kill() -> void:
 
 
 func _interactions(delta: float) -> void:
+	if not won: play_time += delta   # chrono de stats (s'arrête à la victoire)
 	# chrono : si une limite est posée, décompte et mort si épuisé
 	if time_left > 0.0:
 		time_left -= delta
@@ -716,12 +719,12 @@ func _interactions(delta: float) -> void:
 					sw_open[scol] = not bool(sw_open.get(scol, false))
 					switch_cd = 0.4
 					app._emit(_cell_center(c), 12, KEY_COLORS.get(scol, COLORS[SWITCH]), 200.0, 0.4, true, 4.0)
-					app._shake(3.0, 0.1); app._play("key")
+					app._shake(3.0, 0.1); app._play("switch")
 			CHECKPOINT:
 				if respawn_cell != c:
 					respawn_cell = c
 					app._emit(_cell_center(c), 12, COLORS[CHECKPOINT], 200.0, 0.5, false, 3.0)
-					app._play("coin")
+					app._play("checkpoint")
 			GOAL:
 				if not won:
 					if _goal_unlocked():
@@ -740,7 +743,7 @@ func _interactions(delta: float) -> void:
 				has_key = _has_any_key()
 				app.grid.erase(c); app.cell_cfg.erase(c)
 				app._emit(_cell_center(c), 14, KEY_COLORS.get(dcol, COLORS[DOOR]), 200.0, 0.45, true, 4.0)
-				app._play("key"); app._shake(3.0, 0.1)
+				app._play("switch"); app._shake(3.0, 0.1)
 				break
 
 

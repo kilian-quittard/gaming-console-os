@@ -111,7 +111,7 @@ func _physics_process(delta: float) -> void:
 	# morph ball : ↓ pour se mettre en boule, ↑ ou saut pour se relever
 	if has_morph:
 		if _dir_y() > 0 and not morphed:
-			morphed = true; app._play("key")
+			morphed = true; app._play("dash")
 		elif morphed and (_dir_y() < 0 or jbuf > 0.0):
 			morphed = false
 	# tir / missile (pas en morph)
@@ -142,7 +142,7 @@ func _fire(is_missile: bool, aim_up: bool) -> void:
 	var spd := MISSILE_SPEED if is_missile else SHOT_SPEED
 	pshots.append({"pos": origin, "vel": dir * spd, "alive": true, "missile": is_missile})
 	app._emit(origin, 3, Color("ff7043") if is_missile else Color("9be7ff"), 100.0, 0.15, false, 2.0)
-	app._play("spring" if is_missile else "jump")
+	app._play("spring" if is_missile else "shoot")
 
 
 func _update_pshots(delta: float) -> void:
@@ -240,7 +240,7 @@ func _pickup_items() -> void:
 
 func _item_fx(c: Vector2i, msg: String) -> void:
 	app._emit(_cell_center(c), 18, Color("ffde59"), 240.0, 0.6, false, 4.0)
-	app._shake(3.0, 0.15); app._play("win")
+	app._shake(3.0, 0.15); app._play("item")
 	app._set_toast(msg)
 
 

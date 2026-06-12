@@ -435,7 +435,7 @@ func _edit_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_TAB], [JOY_BUTTON_START]): _start_play(false)
 	elif _press(e, [KEY_T], [JOY_BUTTON_RIGHT_STICK]): _start_play(true)
 	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _open_config()
-	elif _press(e, [KEY_C], [JOY_BUTTON_LEFT_STICK]): _toggle_cursor_mode()
+	elif _press(e, [KEY_V], []): _toggle_cursor_mode()   # vitesse curseur (clavier)
 	elif e is InputEventKey and e.pressed and not e.echo and e.keycode >= KEY_1 and e.keycode <= KEY_7:
 		cat = mini(e.keycode - KEY_1, _cats().size() - 1); queue_redraw()
 	if radial_open:
@@ -1138,7 +1138,11 @@ func _scan_projects(dim: String) -> void:
 func _new_project(template_id: String) -> void:
 	cur_template = template_id
 	_load_template(cur_template)
-	var base := "Plateformer"
+	# nom par défaut = nom du template ("Vue de dessus 1", "Metroidvania 2", ...)
+	var base := "Projet"
+	for dim_list in TEMPLATES.values():
+		for t in dim_list:
+			if str(t["id"]) == template_id: base = str(t["name"])
 	var i := 1
 	while ProjectStore.exists("%s %d" % [base, i]): i += 1
 	cur_project = "%s %d" % [base, i]
@@ -1694,7 +1698,7 @@ func _warp_play(c: Vector2i) -> void:
 	warp_cd = 1.0
 	cam_init = false; cur_room = -1
 	_set_toast("→ %s" % level_name(cur_level))
-	_play("key")
+	_play("warp")
 	queue_redraw(); _redraw_world()
 
 
@@ -1741,6 +1745,10 @@ func _compute_room_view(area: Rect2) -> void:
 		var r: Rect2i = rooms[cur_room]
 		target.x = _room_clamp(target.x, area.position.x, area.size.x, r.position.x * CELL, r.size.x * CELL, sc)
 		target.y = _room_clamp(target.y, area.position.y, area.size.y, r.position.y * CELL, r.size.y * CELL, sc)
+	else:
+		# hors salle (ou aucune salle) : le niveau entier sert de salle → jamais de vide hors-monde
+		target.x = _room_clamp(target.x, area.position.x, area.size.x, 0.0, cols * CELL, sc)
+		target.y = _room_clamp(target.y, area.position.y, area.size.y, 0.0, rows * CELL, sc)
 	if not cam_init:
 		view_scale = sc; view_origin = target; cam_init = true
 	else:
@@ -2060,15 +2068,25 @@ func _draw_radial(vp: Vector2) -> void:
 
 
 func _draw_menu(vp: Vector2) -> void:
+	# menu défilant : ne déborde jamais de l'écran, fenêtre centrée sur la sélection
 	var f := ThemeDB.fallback_font
-	var w := 320.0
-	var h := menu_items.size() * 34.0 + 50.0
+	var w := 340.0
+	var row := 34.0
+	var head := 50.0
+	var vis: int = mini(menu_items.size(), int((vp.y - 110.0 - head) / row))
+	var h := vis * row + head + 12.0
 	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
+	var first: int = clampi(menu_idx - vis / 2, 0, maxi(0, menu_items.size() - vis))
 	draw_rect(Rect2(o, Vector2(w, h)), Color(0, 0, 0, 0.85))
 	draw_rect(Rect2(o, Vector2(w, h)), Color("f39c12"), false, 2.0)
 	_text(f, o + Vector2(16, 30), "MENU", Color("f39c12"), 20)
-	for i in menu_items.size():
-		var y := o.y + 56 + i * 34
+	if first > 0:
+		_text(f, Vector2(o.x + w - 30, 30 + o.y), "▲", Color(1, 1, 1, 0.6), 14)
+	if first + vis < menu_items.size():
+		_text(f, Vector2(o.x + w - 30, o.y + h - 12), "▼", Color(1, 1, 1, 0.6), 14)
+	for k in vis:
+		var i := first + k
+		var y := o.y + 56 + k * row
 		if i == menu_idx:
 			draw_rect(Rect2(Vector2(o.x + 8, y - 18), Vector2(w - 16, 28)), Color(1, 1, 1, 0.12))
 		_text(f, Vector2(o.x + 20, y), menu_items[i], Color.WHITE if i == menu_idx else Color(1, 1, 1, 0.65), 16)
@@ -2086,10 +2104,17 @@ func _draw_toast(vp: Vector2) -> void:
 func _draw_banner(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
 	var col := Color("2ecc71")
-	var box := Rect2(vp * 0.5 - Vector2(200, 70), Vector2(400, 140))
-	draw_rect(box, Color(0, 0, 0, 0.7)); draw_rect(box, col, false, 3.0)
-	_text(f, vp * 0.5 - Vector2(80, 10), "GAGNÉ !", col, 40)
-	_text(f, vp * 0.5 + Vector2(-130, 40), "Y: Rejouer   Start/B: Éditeur", Color.WHITE, 16)
+	var box := Rect2(vp * 0.5 - Vector2(210, 95), Vector2(420, 190))
+	draw_rect(box, Color(0, 0, 0, 0.78)); draw_rect(box, col, false, 3.0)
+	_ctext(f, vp.x * 0.5, vp.y * 0.5 - 38, "GAGNÉ !", col, 40)
+	# stats du run : temps + pièces (façon écran de fin)
+	var mins := int(tmpl.play_time) / 60
+	var secs := fmod(tmpl.play_time, 60.0)
+	var stats := "Temps  %d:%05.2f" % [mins, secs]
+	if tmpl.coins_total > 0:
+		stats += "      Pièces  %d/%d" % [tmpl.coins_got, tmpl.coins_total]
+	_ctext(f, vp.x * 0.5, vp.y * 0.5 + 8, stats, Color("f1c40f"), 18)
+	_ctext(f, vp.x * 0.5, vp.y * 0.5 + 62, "Y: Rejouer   Start/B: Éditeur", Color.WHITE, 16)
 
 
 func _text(f: Font, pos: Vector2, s: String, col: Color, size: int) -> void:
@@ -2101,10 +2126,11 @@ func _ctext(f: Font, cx: float, y: float, s: String, col: Color, size: int) -> v
 	draw_string(f, Vector2(cx - w * 0.5, y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 
-func _shell_bg(vp: Vector2) -> void:
+func _shell_bg(vp: Vector2, with_title := true) -> void:
 	draw_rect(Rect2(Vector2.ZERO, vp), Color("1b2838"))
-	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 90, "FORGE", Color("f39c12"), 56)
+	if with_title:
+		var f := ThemeDB.fallback_font
+		_ctext(f, vp.x * 0.5, 90, "FORGE", Color("f39c12"), 56)
 
 
 func _draw_dim(vp: Vector2) -> void:
@@ -2164,7 +2190,7 @@ func _draw_template(vp: Vector2) -> void:
 
 # ============================================================= GAMEDASH
 func _draw_gamedash(vp: Vector2) -> void:
-	_shell_bg(vp)
+	_shell_bg(vp, false)   # pas de gros titre FORGE : les cartes occupent tout l'écran
 	var f := ThemeDB.fallback_font
 	_ctext(f, vp.x * 0.5, 34, cur_project.to_upper(), Color.WHITE, 22)
 	var entries := _dash_entries()
