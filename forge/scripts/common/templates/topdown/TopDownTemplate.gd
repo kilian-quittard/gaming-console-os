@@ -63,22 +63,50 @@ func jump_pressed() -> void: pass
 func jump_released() -> void: pass
 
 
+# le joueur top-down est dessiné dans _draw_world_extra (disque orienté + épée) —
+# on neutralise le perso humanoïde du parent pour éviter le double rendu
+func _draw_player() -> void: pass
+
+
 func seed_demo() -> void:
+	# mini-donjon 2 salles façon Zelda : clé gardée → porte → énigme dalle → sortie
 	app.grid.clear()
+	var g: Dictionary = app.grid
 	var w := 26; var h := 14
 	for x in range(w):
-		app.grid[Vector2i(x, 0)] = GROUND
-		app.grid[Vector2i(x, h - 1)] = GROUND
+		g[Vector2i(x, 0)] = GROUND
+		g[Vector2i(x, h - 1)] = GROUND
 	for y in range(h):
-		app.grid[Vector2i(0, y)] = GROUND
-		app.grid[Vector2i(w - 1, y)] = GROUND
-	# (sol dessiné automatiquement par _draw_ground — pas besoin de le peindre)
-	# quelques obstacles
-	for y in range(4, 8): app.grid[Vector2i(10, y)] = GROUND
-	app.grid[Vector2i(3, 7)] = SPAWN
-	app.grid[Vector2i(w - 3, 7)] = GOAL
-	app.grid[Vector2i(15, 6)] = CHASER
-	app.grid[Vector2i(18, 9)] = COIN
+		g[Vector2i(0, y)] = GROUND
+		g[Vector2i(w - 1, y)] = GROUND
+	# mur central : sépare les 2 salles, porte verrouillée au milieu
+	for y in range(1, h - 1): g[Vector2i(13, y)] = GROUND
+	g[Vector2i(13, 7)] = DOOR
+	# --- salle 1 (gauche) : clé gardée par un chasseur + décor ---
+	g[Vector2i(3, 7)] = SPAWN
+	g[Vector2i(9, 3)] = KEY
+	g[Vector2i(9, 4)] = CHASER
+	g[Vector2i(4, 3)] = BUSH
+	g[Vector2i(4, 11)] = TREE
+	g[Vector2i(10, 10)] = COIN
+	g[Vector2i(6, 5)] = COIN
+	for y in range(2, 5): g[Vector2i(7, y)] = GROUND       # alcôve de la clé
+	# --- salle 2 (droite) : dalle + bloc poussable ouvrent la grille vers l'arrivée ---
+	g[Vector2i(17, 4)] = PLATE
+	g[Vector2i(18, 7)] = PUSHBLOCK
+	g[Vector2i(21, 7)] = GATE
+	g[Vector2i(22, 7)] = GATE
+	g[Vector2i(20, 4)] = SHOOTER
+	g[Vector2i(16, 10)] = ENEMY
+	g[Vector2i(19, 11)] = FLOWER
+	g[Vector2i(23, 3)] = COIN
+	g[Vector2i(23, 7)] = GOAL
+	# mur autour de l'arrivée (la grille est le seul passage)
+	for y in range(5, 10):
+		if y != 7: g[Vector2i(21, y)] = GROUND
+	g[Vector2i(21, 7)] = GATE
+	# salles caméra (style Zelda) : une par moitié
+	app.rooms = [Rect2i(0, 0, 13, h), Rect2i(13, 0, w - 13, h)]
 	app.cursor = Vector2i(3, 7)
 
 

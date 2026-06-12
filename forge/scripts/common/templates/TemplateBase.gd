@@ -141,6 +141,7 @@ var air_t := 8.0           # réserve d'air (noyade, géré par le platformer ; 
 var hearts := 0            # PV courants (0 = système désactivé → mort instantanée)
 var max_hearts := 0
 var pinv := 0.0            # invulnérabilité joueur (i-frames)
+var face_x := 1            # direction regardée (-1/1) — yeux du perso, canon metroid
 var dash_cd := 0.0
 var dashing := 0.0
 var dash_dir := Vector2.RIGHT
@@ -930,11 +931,62 @@ func _draw() -> void:
 
 
 # rendu du joueur (override par genre : sonic tourné, disque top-down...)
+# couleur du corps du perso — surchargeable par genre (metroid = armure orange, ...)
+func player_color() -> Color: return Color("ffd23f")
+
+
 func _draw_player() -> void:
+	var vs: float = app.view_scale
 	var ps: Vector2 = PSIZE * app.squash
 	var anchor: Vector2 = app._w2s(ppos + Vector2(PSIZE.x * 0.5, PSIZE.y))
-	var pr := Rect2(anchor - Vector2(ps.x * 0.5, ps.y) * app.view_scale, ps * app.view_scale)
-	draw_rect(pr, Color("ffffff")); draw_rect(pr, Color("2c3e50"), false, 2.0)
+	var pr := Rect2(anchor - Vector2(ps.x * 0.5, ps.y) * vs, ps * vs)
+	var body := player_color()
+	var outline := Color("2c3e50")
+	if pinv > 0.0 and fmod(pinv, 0.18) > 0.09:
+		body.a = 0.35   # clignote pendant les i-frames
+	var moving := absf(pvel.x) > 30.0
+	var t: float = app.anim_t
+	# jambes : alternées en course, repliées en l'air (dessinées sous le corps)
+	var leg_h: float = 5.0 * vs
+	var leg_w: float = pr.size.x * 0.22
+	var body_r := Rect2(pr.position, Vector2(pr.size.x, pr.size.y - leg_h))
+	if on_floor and moving and not dead:
+		var ph := sin(t * 16.0)
+		var l1: float = leg_h * (0.5 + 0.5 * ph)
+		var l2: float = leg_h * (0.5 - 0.5 * ph)
+		draw_rect(Rect2(pr.position + Vector2(pr.size.x * 0.18, pr.size.y - l1), Vector2(leg_w, l1)), body.darkened(0.25))
+		draw_rect(Rect2(pr.position + Vector2(pr.size.x * 0.60, pr.size.y - l2), Vector2(leg_w, l2)), body.darkened(0.25))
+	elif on_floor:
+		draw_rect(Rect2(pr.position + Vector2(pr.size.x * 0.18, pr.size.y - leg_h), Vector2(leg_w, leg_h)), body.darkened(0.25))
+		draw_rect(Rect2(pr.position + Vector2(pr.size.x * 0.60, pr.size.y - leg_h), Vector2(leg_w, leg_h)), body.darkened(0.25))
+	else:
+		body_r = pr   # en l'air : corps plein (jambes rentrées)
+	# corps arrondi + contour
+	draw_rect(body_r, body)
+	draw_rect(body_r, outline, false, 2.0)
+	# visage tourné vers face_x : 2 yeux blancs + pupilles, cligne parfois
+	var eye_y: float = body_r.position.y + body_r.size.y * 0.32
+	var off: float = float(face_x) * body_r.size.x * 0.10
+	var ex1: float = body_r.position.x + body_r.size.x * 0.32 + off
+	var ex2: float = body_r.position.x + body_r.size.x * 0.68 + off
+	var er: float = body_r.size.x * 0.135
+	var blink := fmod(t, 3.2) > 3.05 and not dead
+	if blink:
+		draw_line(Vector2(ex1 - er, eye_y), Vector2(ex1 + er, eye_y), outline, 2.0)
+		draw_line(Vector2(ex2 - er, eye_y), Vector2(ex2 + er, eye_y), outline, 2.0)
+	else:
+		draw_circle(Vector2(ex1, eye_y), er, Color.WHITE)
+		draw_circle(Vector2(ex2, eye_y), er, Color.WHITE)
+		draw_circle(Vector2(ex1, eye_y), er, outline, false, 1.5)
+		draw_circle(Vector2(ex2, eye_y), er, outline, false, 1.5)
+		var pup: float = er * 0.5
+		draw_circle(Vector2(ex1 + off * 0.8, eye_y), pup, outline)
+		draw_circle(Vector2(ex2 + off * 0.8, eye_y), pup, outline)
+	# joues (petit accent sympa)
+	if not dead:
+		var ch := Color("ff8a65"); ch.a = 0.55
+		draw_circle(Vector2(ex1 - er * 0.9, eye_y + er * 1.5), er * 0.5, ch)
+		draw_circle(Vector2(ex2 + er * 0.9, eye_y + er * 1.5), er * 0.5, ch)
 	if has_key:
 		draw_circle(pr.position + Vector2(pr.size.x * 0.5, -8), 5, COLORS[KEY])
 

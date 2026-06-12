@@ -231,6 +231,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	input_x = _dir_x()
+	if input_x != 0: face_x = input_x   # direction regardée (yeux du perso)
 	coyote_t -= delta
 	jbuf -= delta
 	switch_cd -= delta

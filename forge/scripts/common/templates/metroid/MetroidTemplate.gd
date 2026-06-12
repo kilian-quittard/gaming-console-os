@@ -16,7 +16,6 @@ var missiles := 0
 var max_missiles := 0
 var morphed := false
 var air_jumps := 0
-var face_x := 1
 var pshots := []          # tirs du joueur {pos, vel, alive, missile}
 var shot_cd := 0.0
 var missile_held := false # debounce gâchette/touche missile
@@ -53,6 +52,7 @@ func seed_demo() -> void:
 	var grid: Dictionary = app.grid
 	var rows: int = app.rows
 	grid.clear()
+	app.bg_theme = 1   # ambiance caverne/nuit par défaut (au lieu des collines)
 	# salle 1 : sol, item double-saut sur une corniche, porte tir vers la droite
 	for x in range(0, 30):
 		grid[Vector2i(x, rows - 1)] = GROUND
@@ -245,6 +245,9 @@ func _item_fx(c: Vector2i, msg: String) -> void:
 
 
 # rendu : boule en morph, indicateur de visée sinon
+func player_color() -> Color: return Color("ffb74d")   # armure orange
+
+
 func _draw_player() -> void:
 	if morphed:
 		var ctr: Vector2 = app._w2s(ppos + Vector2(PSIZE.x * 0.5, PSIZE.y * 0.7))

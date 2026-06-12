@@ -1149,9 +1149,10 @@ func _new_project(template_id: String) -> void:
 	cols = LEVEL_COLS_DEF
 	bg_theme = 0
 	undo_stack.clear(); redo_stack.clear()
-	tmpl.seed_demo()
+	# reset AVANT le seed : le seed peut poser salles/props/thème sans être écrasé
 	screens = {}; level_props = {}; cell_cfg.clear(); bg_deco.clear(); rooms.clear(); cur_room = -1
 	levels = {}; cur_level = "1"; warp_cd = 0.0
+	tmpl.seed_demo()
 	# défaut par genre : top-down a les cœurs activés (3), platformer non
 	if tmpl.default_hp() > 0: level_props["player_hp"] = tmpl.default_hp()
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
