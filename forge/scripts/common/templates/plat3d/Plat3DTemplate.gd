@@ -35,11 +35,19 @@ var svel := Vector3.ZERO    # vitesse horizontale SONIC (momentum)
 # slerp sûr du haut lissé : Vector3.slerp exige des unitaires, et l'axe est
 # indéfini à 180° (anti-parallèle) → on renormalise et on biaise légèrement
 func _up_step(target: Vector3, delta: float) -> void:
+	# rotation manuelle (Vector3.slerp est numériquement fragile près de 0°/180°)
 	var t := target.normalized()
 	var g := g_up.normalized()
-	if g.dot(t) < -0.999:
-		g = (g + Vector3(0.01, 0.013, 0.007)).normalized()
-	g_up = g.slerp(t, clampf(6.0 * delta, 0.0, 1.0)).normalized()
+	var d := clampf(g.dot(t), -1.0, 1.0)
+	if d > 0.9999:
+		g_up = t; return
+	var axis := g.cross(t)
+	if axis.length() < 0.0001:   # quasi opposés : axe arbitraire perpendiculaire
+		axis = g.cross(Vector3.RIGHT)
+		if axis.length() < 0.0001: axis = g.cross(Vector3.FORWARD)
+	axis = axis.normalized()
+	var ang := acos(d) * clampf(6.0 * delta, 0.0, 1.0)
+	g_up = g.rotated(axis, ang).normalized()
 var lock_coord := 0.0       # coordonnée verrouillée en 2.5D (z ou x, en unités)
 var enemies3 := []          # {node, x, z, dir, min, max}
 var world3: Node3D = null
@@ -343,8 +351,17 @@ func _build_world() -> void:
 			world3.add_child(lmi)
 			nodes.append(lmi)
 			loops3.append({"c": lc, "axe": laxe, "r": lr})
-			# dalle au sol sous le looping (la voie continue)
+			# dalle au sol + rampes tangentes d'entrée/sortie (look montagnes russes)
 			nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), Color("9e9e9e")))
+			var adir := Vector3.RIGHT if laxe == "X" else Vector3.BACK
+			for sgn in [-1.0, 1.0]:
+				var rp := PrismMesh.new(); rp.size = Vector3(1.2, 0.5, 0.9)
+				var rmi2 := MeshInstance3D.new(); rmi2.mesh = rp
+				rmi2.material_override = _mat(Color("ffa726").darkened(0.25))
+				rmi2.position = Vector3(cx, 0.25, cz) + adir * sgn * 1.3
+				rmi2.rotation_degrees = Vector3(0, (-90 if sgn > 0 else 90) if laxe == "X" else (0 if sgn > 0 else 180), 0)
+				world3.add_child(rmi2)
+				nodes.append(rmi2)
 		elif t == PLANET:
 			var pr := float(app.cell_cfg.get(k, {}).get("r", 3))
 			var pc := Vector3(cx, pr + 1.0, cz)
@@ -624,11 +641,28 @@ func _loop3_step(delta: float) -> bool:
 		var lp = on_loop3
 		var along := Vector3.RIGHT if lp.axe == "X" else Vector3.BACK
 		var rr: float = lp.r - 0.55
+		# SAUT = on quitte le looping (éjection tangente + impulsion)
+		if jb3 > 0.0:
+			jb3 = 0.0
+			var upj: Vector3 = ((lp.c as Vector3) - pos3).normalized()
+			var tangj := along * l3_dir
+			vel3 = tangj * l3_v * 0.8 + upj * JUMP3 * 0.7
+			svel = Vector3(vel3.x, 0, vel3.z)
+			on_loop3 = null
+			grounded3 = false
+			app._play("jump")
+			return false
 		l3_th += l3_dir * (l3_v / rr) * delta
 		if l3_th >= TAU:
-			# tour complet : repose au sol, vitesse conservée
+			# tour complet : SORTIE au-delà de l'entrée, la course continue
+			# (+ léger déport latéral en 3D, façon tire-bouchon)
 			on_loop3 = null
-			pos3 = lp.c - Vector3(0, lp.r, 0) + Vector3(0, 0.45, 0) + along * l3_dir * 0.6
+			var perp := Vector3.BACK if lp.axe == "X" else Vector3.RIGHT
+			var side := perp * (0.6 if move_mode == "3d" else 0.0)
+			pos3 = lp.c - Vector3(0, lp.r, 0) + Vector3(0, 0.45, 0) + along * l3_dir * 1.4 + side
+			if move_mode != "3d":
+				if move_mode == "x": pos3.z = lock_coord
+				else: pos3.x = lock_coord
 			svel = along * l3_dir * l3_v
 			vel3 = svel
 			grounded3 = true
