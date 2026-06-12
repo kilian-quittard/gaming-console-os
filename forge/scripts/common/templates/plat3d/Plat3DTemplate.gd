@@ -24,6 +24,16 @@ var on_planet = null        # planète sur laquelle on marche (null = gravité n
 var pl_head := Vector3.FORWARD   # cap tangent (avant) en mode planète
 var look_dx := 0.0          # delta souris accumulé (appliqué selon le mode)
 var g_up := Vector3.UP      # "haut" LISSÉ (caméra/perso) — interpole entre les champs
+
+
+# slerp sûr du haut lissé : Vector3.slerp exige des unitaires, et l'axe est
+# indéfini à 180° (anti-parallèle) → on renormalise et on biaise légèrement
+func _up_step(target: Vector3, delta: float) -> void:
+	var t := target.normalized()
+	var g := g_up.normalized()
+	if g.dot(t) < -0.999:
+		g = (g + Vector3(0.01, 0.013, 0.007)).normalized()
+	g_up = g.slerp(t, clampf(6.0 * delta, 0.0, 1.0)).normalized()
 var lock_coord := 0.0       # coordonnée verrouillée en 2.5D (z ou x, en unités)
 var enemies3 := []          # {node, x, z, dir, min, max}
 var world3: Node3D = null
@@ -505,7 +515,7 @@ func _physics_process(delta: float) -> void:
 	_sweep_removed_meshes()
 	_update_enemies3(delta)
 	# rendu (et retour à la verticale en douceur après une planète)
-	g_up = g_up.slerp(Vector3.UP, clampf(6.0 * delta, 0.0, 1.0)).normalized()
+	_up_step(Vector3.UP, delta)
 	player3.position = pos3 + Vector3(0, 0.15, 0)
 	player3.basis = player3.basis.slerp(Basis.IDENTITY, clampf(8.0 * delta, 0.0, 1.0))
 	_update_camera(delta)
@@ -585,7 +595,7 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 		if pos3.y < -6.0:
 			_kill(); return true
 	# haut LISSÉ : la caméra et le perso tournent en douceur entre les champs
-	g_up = g_up.slerp(up, clampf(6.0 * delta, 0.0, 1.0)).normalized()
+	_up_step(up, delta)
 	var ct: Vector3
 	if locked:
 		# caméra 2.5D : de côté, elle ROULE avec le haut local (Galaxy 2.5D)
