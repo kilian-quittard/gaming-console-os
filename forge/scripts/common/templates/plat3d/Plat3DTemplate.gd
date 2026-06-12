@@ -48,6 +48,62 @@ func _wants_parallax() -> bool: return false
 func wants_2d_world() -> bool: return false    # ÉDITION AUSSI en 3D (curseur 2D masqué)
 
 
+const OBJ_TILES := [COIN, SPIKE, SPAWN, GOAL, CHECKPOINT, WARP, MODE25, MODE3D, ENEMY]
+
+
+# on ne ramasse que si la tuile visée = la tuile active (sinon on POSE par-dessus)
+func can_grab(c: Vector2i) -> bool:
+	return app.grid.get(c, EMPTY) == app._active_tile()
+
+
+# SUPERPOSITION : objets gardent le terrain dessous ; bloc sur bloc = empile
+func place_tile(c: Vector2i, t: int, fresh: bool) -> void:
+	var cur: int = app.grid.get(c, EMPTY)
+	var cfg: Dictionary = app.cell_cfg.get(c, {})
+	if t == GROUND:
+		if cur == GROUND and fresh:
+			cfg["h"] = mini(int(cfg.get("h", 1)) + 1, 3)   # re-clic = +1 étage
+			app.cell_cfg[c] = cfg
+		elif cur != GROUND:
+			var bh := int(cfg.get("base_h", 0))
+			app.grid[c] = GROUND
+			app.cell_cfg[c] = {"h": maxi(1, bh)}
+		return
+	if t == FLOOR:
+		app.grid[c] = FLOOR
+		app.cell_cfg.erase(c)
+		return
+	if OBJ_TILES.has(t):
+		var bh2 := 0
+		if cur == GROUND: bh2 = int(cfg.get("h", 1))          # objet posé SUR le bloc
+		elif OBJ_TILES.has(cur): bh2 = int(cfg.get("base_h", 0))
+		app.grid[c] = t
+		if bh2 > 0: app.cell_cfg[c] = {"base_h": bh2}
+		else: app.cell_cfg.erase(c)
+		return
+	app.grid[c] = t
+
+
+# effacement PROGRESSIF : objet → bloc → sol → vide
+func erase_tile(c: Vector2i) -> void:
+	var cur: int = app.grid.get(c, EMPTY)
+	var cfg: Dictionary = app.cell_cfg.get(c, {})
+	if OBJ_TILES.has(cur) and int(cfg.get("base_h", 0)) > 0:
+		app.grid[c] = GROUND
+		app.cell_cfg[c] = {"h": int(cfg["base_h"])}
+		return
+	if cur == GROUND:
+		var h := int(cfg.get("h", 1))
+		if h > 1: app.cell_cfg[c] = {"h": h - 1}
+		else:
+			app.grid[c] = FLOOR; app.cell_cfg.erase(c)
+		return
+	if OBJ_TILES.has(cur):
+		app.grid[c] = FLOOR; app.cell_cfg.erase(c)
+		return
+	app.grid.erase(c); app.cell_cfg.erase(c)
+
+
 # souris/pointeur -> case : raycast caméra sur le plan du sol (y = 0)
 func screen_to_cell(sp: Vector2) -> Vector2i:
 	if cam3 == null or not cam3.current:
@@ -169,7 +225,7 @@ func _cell_h(c: Vector2i) -> float:
 	if t == EMPTY: return -1000.0
 	if t == GROUND:
 		return float(app.cell_cfg.get(c, {}).get("h", 1))
-	return 0.0   # sol + marqueurs = plancher
+	return float(app.cell_cfg.get(c, {}).get("base_h", 0))   # objet : hauteur du bloc dessous
 
 
 func _build_world() -> void:
@@ -188,23 +244,27 @@ func _build_world() -> void:
 			var h := _cell_h(k)
 			nodes.append(_box(Vector3(U, h, U), Vector3(cx, h * 0.5, cz), Color("8d6e63")))
 		else:
-			# plancher (dalle) — teinté par la tuile pour les marqueurs
-			var slab_c := Color("9e9e9e") if t == FLOOR else col
-			nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), slab_c))
+			# support : bloc (objet posé dessus) OU dalle de sol
+			var bh := float(app.cell_cfg.get(k, {}).get("base_h", 0))
+			if bh > 0.0:
+				nodes.append(_box(Vector3(U, bh, U), Vector3(cx, bh * 0.5, cz), Color("8d6e63")))
+			else:
+				var slab_c := Color("9e9e9e") if t == FLOOR else col.lerp(Color("9e9e9e"), 0.4)
+				nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), slab_c))
 			match t:
 				COIN:
-					var cn := _box(Vector3(0.36, 0.36, 0.08), Vector3(cx, 0.5, cz), Color("f1c40f"))
+					var cn := _box(Vector3(0.36, 0.36, 0.08), Vector3(cx, bh + 0.5, cz), Color("f1c40f"))
 					coin_nodes.append(cn); nodes.append(cn)
 				SPIKE:
-					nodes.append(_box(Vector3(0.5, 0.45, 0.5), Vector3(cx, 0.22, cz), Color("e74c3c")))
+					nodes.append(_box(Vector3(0.5, 0.45, 0.5), Vector3(cx, bh + 0.22, cz), Color("e74c3c")))
 				GOAL:
-					nodes.append(_box(Vector3(0.1, 1.8, 0.1), Vector3(cx, 0.9, cz), Color("ecf0f1")))
-					nodes.append(_box(Vector3(0.5, 0.3, 0.06), Vector3(cx + 0.25, 1.5, cz), Color("3498db")))
+					nodes.append(_box(Vector3(0.1, 1.8, 0.1), Vector3(cx, bh + 0.9, cz), Color("ecf0f1")))
+					nodes.append(_box(Vector3(0.5, 0.3, 0.06), Vector3(cx + 0.25, bh + 1.5, cz), Color("3498db")))
 				MODE25, MODE3D:
-					nodes.append(_box(Vector3(0.16, 0.9, 0.16), Vector3(cx, 0.45, cz), col))
+					nodes.append(_box(Vector3(0.16, 0.9, 0.16), Vector3(cx, bh + 0.45, cz), col))
 				ENEMY:
-					var en := _box(Vector3(0.6, 0.6, 0.6), Vector3(cx, 0.3, cz), Color("e74c3c"))
-					enemies3.append({"node": en, "x": cx, "z": cz, "dir": 1.0,
+					var en := _box(Vector3(0.6, 0.6, 0.6), Vector3(cx, bh + 0.3, cz), Color("e74c3c"))
+					enemies3.append({"node": en, "x": cx, "z": cz, "dir": 1.0, "y": bh,
 						"min": cx - 3.0, "max": cx + 3.0})
 					nodes.append(en)
 		mesh_by_cell[k] = nodes
@@ -258,7 +318,7 @@ func _process(delta: float) -> void:
 				if player3: player3.visible = false
 		# curseur 3D sur la case visée (posé au sommet de la colonne)
 		var c: Vector2i = app.cursor
-		var h := maxf(_cell_h(c), 0.0)
+		var h: float = maxf(_cell_h(c), 0.0)
 		cursor3.visible = true
 		cursor3.position = Vector3(float(c.x) + 0.5, h + 0.13, float(c.y) + 0.5)
 		ghost3.visible = false
@@ -410,13 +470,14 @@ func _update_enemies3(delta: float) -> void:
 		var nx: float = en.x + en.dir * 1.8 * delta
 		var front := Vector2i(int(nx + (PHALF if en.dir > 0 else -PHALF)), int(en.z))
 		var h := _cell_h(front)
-		if h < -100.0 or h > 0.6:
+		var ey := float(en.get("y", 0))
+		if h < -100.0 or absf(h - ey) > 0.6:
 			en.dir = -en.dir
 		else:
 			en.x = nx
-		en.node.position = Vector3(en.x, 0.3, en.z)
+		en.node.position = Vector3(en.x, float(en.get("y", 0)) + 0.3, en.z)
 		# contact joueur (si à hauteur)
-		if absf(pos3.x - en.x) < 0.6 and absf(pos3.z - en.z) < 0.6 and pos3.y < 1.0:
+		if absf(pos3.x - en.x) < 0.6 and absf(pos3.z - en.z) < 0.6 				and absf(pos3.y - (float(en.get("y", 0)) + 0.3)) < 0.9:
 			_die()
 
 

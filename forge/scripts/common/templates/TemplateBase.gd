@@ -182,6 +182,13 @@ func play_hud_text() -> String: return ""        # texte HUD en jeu (ex: missile
 func wants_2d_world() -> bool: return true       # false = monde rendu en 3D (curseur 2D masqué)
 
 
+# règles de POSE/EFFACEMENT (la 3D superpose terrain + objets, empile les blocs)
+func can_grab(c: Vector2i) -> bool: return app.grid.has(c)
+func place_tile(c: Vector2i, t: int, _fresh: bool) -> void: app.grid[c] = t
+func erase_tile(c: Vector2i) -> void:
+	app.grid.erase(c); app.cell_cfg.erase(c)
+
+
 # mapping écran -> case de grille (la 3D override avec un raycast caméra)
 func screen_to_cell(sp: Vector2) -> Vector2i:
 	var w: Vector2 = app._s2w(sp)

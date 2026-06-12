@@ -781,7 +781,7 @@ func _begin_stroke(place: bool) -> void:
 	_release_insp_if_elsewhere()
 	_push_undo()
 	if place:
-		if grid.has(cursor):
+		if tmpl.can_grab(cursor):
 			# bloc déjà posé sous le pointeur → on le ramasse pour le déplacer
 			grabbing = true
 			grab_tile = grid[cursor]
@@ -790,9 +790,9 @@ func _begin_stroke(place: bool) -> void:
 			grid.erase(cursor); cell_cfg.erase(cursor)
 			place_held = false
 		else:
-			place_held = true; grid[cursor] = _active_tile()
+			place_held = true; tmpl.place_tile(cursor, _active_tile(), true)
 	else:
-		erase_held = true; grid.erase(cursor); cell_cfg.erase(cursor)
+		erase_held = true; tmpl.erase_tile(cursor)
 	queue_redraw(); _redraw_world()
 
 
@@ -1396,9 +1396,9 @@ func _process(delta: float) -> void:
 		return
 	var grid_changed := false
 	if place_held and not grabbing and grid.get(cursor) != _active_tile():
-		grid[cursor] = _active_tile(); grid_changed = true
+		tmpl.place_tile(cursor, _active_tile(), false); grid_changed = true
 	elif erase_held and grid.has(cursor):
-		grid.erase(cursor); cell_cfg.erase(cursor); grid_changed = true
+		tmpl.erase_tile(cursor); grid_changed = true
 	if grid_changed:
 		_redraw_world()
 	if moved or grid_changed or not particles.is_empty():
