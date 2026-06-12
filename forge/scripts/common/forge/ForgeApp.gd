@@ -770,7 +770,14 @@ func _text_cycle(dir: int) -> void:
 	queue_redraw()
 
 
+func _release_insp_if_elsewhere() -> void:
+	if insp_cell != Vector2i(-999, -999) and cursor != insp_cell and not _insp_hover():
+		insp_cell = Vector2i(-999, -999)
+		queue_redraw()
+
+
 func _begin_stroke(place: bool) -> void:
+	_release_insp_if_elsewhere()
 	_push_undo()
 	if place:
 		if grid.has(cursor):
@@ -1844,13 +1851,13 @@ func _draw_inspector(vp: Vector2) -> void:
 	if not cfg_open:
 		var cur_t: int = int(grid.get(cursor, -1))
 		if not _cfg_fields_for(cur_t).is_empty():
-			insp_cell = cursor
+			insp_cell = cursor   # nouvel objet survolé → re-épingle
 		elif insp_cell != Vector2i(-999, -999):
-			# garde l'épingle : survol du panneau OU corridor d'approche (droite de
-			# l'écran) — se ferme en repartant à gauche ou si l'objet a disparu
+			# épingle STICKY : reste tant que l'objet existe. Elle se libère quand
+			# on édite AILLEURS (pose/efface sur une autre case, voir _begin_stroke)
+			# ou si l'objet a disparu.
 			var still: int = int(grid.get(insp_cell, -1))
-			var keep := _insp_hover() or (insp_panel.size.x > 0.0 and aim.x > insp_panel.position.x - 200.0)
-			if not keep or still < 0 or _cfg_fields_for(still).is_empty():
+			if still < 0 or _cfg_fields_for(still).is_empty():
 				insp_cell = Vector2i(-999, -999)
 	var cell := cfg_cell if cfg_open else insp_cell
 	var t: int = int(grid.get(cell, -1))
