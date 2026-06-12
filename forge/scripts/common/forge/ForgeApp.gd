@@ -2120,7 +2120,7 @@ func _draw_dim(vp: Vector2) -> void:
 		draw_rect(box, Color("223349"))
 		if i == sel: draw_rect(box, Color("f39c12"), false, 4.0)
 		_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 18, opts[i], Color.WHITE if i == sel else Color(1, 1, 1, 0.6), 60)
-		if i == 1:
+		if i == 1 and (TEMPLATES.get("3D", []) as Array).is_empty():
 			_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 55, "(bientôt)", Color(1, 1, 1, 0.4), 16)
 	_ctext(f, vp.x * 0.5, vp.y - 40, "‹ › choisir    A valider", Color(1, 1, 1, 0.6), 16)
 

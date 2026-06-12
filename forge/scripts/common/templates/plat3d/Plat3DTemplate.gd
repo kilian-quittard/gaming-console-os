@@ -172,13 +172,30 @@ func _ready() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_SKY
-	var sky := Sky.new(); sky.sky_material = ProceduralSkyMaterial.new()
+	var skm := ProceduralSkyMaterial.new()
+	skm.sky_top_color = Color("2a5d9c")
+	skm.sky_horizon_color = Color("ffd9a0")
+	skm.ground_bottom_color = Color("2a2e38")
+	skm.ground_horizon_color = Color("e8b27d")
+	skm.sun_angle_max = 30.0
+	var sky := Sky.new(); sky.sky_material = skm
 	e.sky = sky
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	e.ambient_light_energy = 1.1
+	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	e.glow_enabled = true
+	e.glow_intensity = 0.5
+	e.glow_bloom = 0.1
+	e.fog_enabled = true
+	e.fog_light_color = Color("cfa97e")
+	e.fog_density = 0.012
+	e.fog_sky_affect = 0.2
 	env.environment = e
 	world3.add_child(env)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, -30, 0)
+	sun.rotation_degrees = Vector3(-52, -28, 0)
+	sun.light_color = Color("fff2dd")
+	sun.light_energy = 1.25
 	sun.shadow_enabled = true
 	world3.add_child(sun)
 	cam3 = Camera3D.new()
@@ -202,12 +219,24 @@ func _ready() -> void:
 	world3.add_child(ghost3)
 
 
-func _mat(c: Color) -> StandardMaterial3D:
-	if not _mats.has(c):
+func _mat(c: Color, glow := 0.0) -> StandardMaterial3D:
+	var key := "%s|%.1f" % [c.to_html(), glow]
+	if not _mats.has(key):
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
-		_mats[c] = m
-	return _mats[c]
+		m.roughness = 0.82
+		if glow > 0.0:
+			m.emission_enabled = true
+			m.emission = c
+			m.emission_energy_multiplier = glow
+		_mats[key] = m
+	return _mats[key]
+
+
+func _box_glow(size: Vector3, at: Vector3, c: Color, glow: float) -> MeshInstance3D:
+	var mi := _box(size, at, c)
+	mi.material_override = _mat(c, glow)
+	return mi
 
 
 func _box(size: Vector3, at: Vector3, c: Color) -> MeshInstance3D:
@@ -250,11 +279,11 @@ func _build_world() -> void:
 			if bh > 0.0:
 				nodes.append(_box(Vector3(U, bh, U), Vector3(cx, bh * 0.5, cz), Color("8d6e63")))
 			else:
-				var slab_c := Color("9e9e9e") if t == FLOOR else col.lerp(Color("9e9e9e"), 0.4)
+				var slab_c := (Color("a8b0b8") if (k.x + k.y) % 2 == 0 else Color("939ba3")) 					if t == FLOOR else col.lerp(Color("9e9e9e"), 0.4)
 				nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), slab_c))
 			match t:
 				COIN:
-					var cn := _box(Vector3(0.36, 0.36, 0.08), Vector3(cx, bh + 0.5, cz), Color("f1c40f"))
+					var cn := _box_glow(Vector3(0.36, 0.36, 0.08), Vector3(cx, bh + 0.5, cz), Color("f1c40f"), 1.6)
 					coin_nodes.append(cn); nodes.append(cn)
 				SPIKE:
 					nodes.append(_box(Vector3(0.5, 0.45, 0.5), Vector3(cx, bh + 0.22, cz), Color("e74c3c")))
@@ -262,7 +291,7 @@ func _build_world() -> void:
 					nodes.append(_box(Vector3(0.1, 1.8, 0.1), Vector3(cx, bh + 0.9, cz), Color("ecf0f1")))
 					nodes.append(_box(Vector3(0.5, 0.3, 0.06), Vector3(cx + 0.25, bh + 1.5, cz), Color("3498db")))
 				MODE25, MODE3D:
-					nodes.append(_box(Vector3(0.16, 0.9, 0.16), Vector3(cx, bh + 0.45, cz), col))
+					nodes.append(_box_glow(Vector3(0.16, 0.9, 0.16), Vector3(cx, bh + 0.45, cz), col, 1.2))
 				ENEMY:
 					var en := _box(Vector3(0.6, 0.6, 0.6), Vector3(cx, bh + 0.3, cz), Color("e74c3c"))
 					enemies3.append({"node": en, "x": cx, "z": cz, "dir": 1.0, "y": bh,
