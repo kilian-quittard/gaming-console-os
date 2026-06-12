@@ -27,7 +27,7 @@ enum { EMPTY, GROUND, SPAWN, COIN, ENEMY, GOAL, SPRING, SPIKE, BREAKABLE, MOVPLA
 	FALLBLOCK, FIREBAR, CRUMBLE,
 	BOSS, FLOOR, PLATE, PUSHBLOCK, WARP,
 	ITEM_DJUMP, ITEM_MORPH, ITEM_MISSILE, ENERGY, DOOR_BEAM, DOOR_MISSILE, MORPH_TUBE,
-	MODE25, MODE3D, PLANET }
+	MODE25, MODE3D, PLANET, RAMP, LOOP3D }
 const SLOPES := [SLOPE_R, SLOPE_L, GSL_R_LO, GSL_R_HI, GSL_L_HI, GSL_L_LO,
 	CURVE_RU_CV, CURVE_RU_CC, CURVE_RD_CV, CURVE_RD_CC]
 const NAMES := {
@@ -51,7 +51,8 @@ const NAMES := {
 	ITEM_DJUMP: "Double-saut", ITEM_MORPH: "Morph ball", ITEM_MISSILE: "Missiles (+5)",
 	ENERGY: "Réservoir énergie", DOOR_BEAM: "Porte (tir)", DOOR_MISSILE: "Porte (missile)",
 	MORPH_TUBE: "Conduit (morph)",
-	MODE25: "Zone 2.5D", MODE3D: "Zone 3D", PLANET: "Planète (gravité)"
+	MODE25: "Zone 2.5D", MODE3D: "Zone 3D", PLANET: "Planète (gravité)",
+	RAMP: "Rampe", LOOP3D: "Looping 3D"
 }
 const COLORS := {
 	GROUND: Color("6b4a2b"), SPAWN: Color("2ecc71"), COIN: Color("f1c40f"),
@@ -75,7 +76,8 @@ const COLORS := {
 	ITEM_DJUMP: Color("4cd6b3"), ITEM_MORPH: Color("ffb74d"), ITEM_MISSILE: Color("ff7043"),
 	ENERGY: Color("ff5e8a"), DOOR_BEAM: Color("42a5f5"), DOOR_MISSILE: Color("ef5350"),
 	MORPH_TUBE: Color("78909c"),
-	MODE25: Color("26c6da"), MODE3D: Color("ab47bc"), PLANET: Color("5c9ded")
+	MODE25: Color("26c6da"), MODE3D: Color("ab47bc"), PLANET: Color("5c9ded"),
+	RAMP: Color("a1887f"), LOOP3D: Color("ffa726")
 }
 const KEY_COLORS := {"or": Color("f1c40f"), "rouge": Color("e74c3c"), "bleu": Color("3498db"), "vert": Color("2ecc71"), "rose": Color("ff6ec7")}
 
@@ -1496,6 +1498,17 @@ func draw_tile(ci: CanvasItem, p: Vector2, t: int, scale := 1.0, alpha := 1.0, w
 			else:
 				ci.draw_line(mc - Vector2(cs * 0.24, 0), mc + Vector2(cs * 0.24, 0), col.lightened(0.3), 3.0 * scale)
 				ci.draw_line(mc - Vector2(0, cs * 0.24), mc + Vector2(0, cs * 0.24), col.lightened(0.3), 3.0 * scale)
+		RAMP:
+			# rampe (vue de dessus) : triangle directionnel
+			ci.draw_rect(Rect2(p + Vector2(pad, pad), Vector2(cs - pad * 2, cs - pad * 2)), col.darkened(0.25))
+			var rc := p + Vector2(cs, cs) * 0.5
+			ci.draw_colored_polygon(PackedVector2Array([
+				rc + Vector2(-cs * 0.22, cs * 0.2), rc + Vector2(cs * 0.26, 0), rc + Vector2(-cs * 0.22, -cs * 0.2)]), col.lightened(0.2))
+		LOOP3D:
+			# looping (vue de dessus) : double cercle
+			var lc3 := p + Vector2(cs, cs) * 0.5
+			ci.draw_arc(lc3, cs * 0.36, 0, TAU, 22, col, 3.0 * scale)
+			ci.draw_arc(lc3, cs * 0.22, 0, TAU, 18, col.lightened(0.25), 2.0 * scale)
 		PLANET:
 			# planète (vue de dessus) : disque + anneau d'influence
 			var plc := p + Vector2(cs, cs) * 0.5

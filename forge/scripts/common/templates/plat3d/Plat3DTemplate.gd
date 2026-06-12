@@ -24,6 +24,12 @@ var on_planet = null        # planète sur laquelle on marche (null = gravité n
 var pl_head := Vector3.FORWARD   # cap tangent (avant) en mode planète
 var look_dx := 0.0          # delta souris accumulé (appliqué selon le mode)
 var g_up := Vector3.UP      # "haut" LISSÉ (caméra/perso) — interpole entre les champs
+var loops3 := []            # {c: Vector3 centre, axe: "X"/"Z", r: float}
+var on_loop3 = null         # looping en cours de parcours
+var l3_th := 0.0            # angle sur le rail du looping (0 = bas)
+var l3_v := 0.0             # vitesse sur le rail
+var l3_dir := 1.0           # sens de parcours
+var svel := Vector3.ZERO    # vitesse horizontale SONIC (momentum)
 
 
 # slerp sûr du haut lissé : Vector3.slerp exige des unitaires, et l'axe est
@@ -51,7 +57,7 @@ var _focus_init := false
 
 const P3_CATS := [
 	{"name": "Sol",     "tiles": [FLOOR]},
-	{"name": "Blocs",   "tiles": [GROUND]},
+	{"name": "Blocs",   "tiles": [GROUND, RAMP, LOOP3D]},
 	{"name": "Mode",    "tiles": [MODE25, MODE3D, PLANET]},
 	{"name": "Items",   "tiles": [COIN]},
 	{"name": "Danger",  "tiles": [SPIKE]},
@@ -152,6 +158,10 @@ func config_fields(t: int) -> Array:
 		return [{"key": "axe", "label": "Axe", "opts": ["X", "Z"], "def": "X"}]
 	if t == PLANET:
 		return [{"key": "r", "label": "Rayon", "opts": [2, 3, 4], "def": 3}]
+	if t == RAMP:
+		return [{"key": "axe", "label": "Sens", "opts": ["X+", "X-", "Z+", "Z-"], "def": "X+"}]
+	if t == LOOP3D:
+		return [{"key": "axe", "label": "Axe", "opts": ["X", "Z"], "def": "X"}]
 	return super(t)
 
 
@@ -273,13 +283,30 @@ func _cell_h(c: Vector2i) -> float:
 	if t == GROUND:
 		return float(app.cell_cfg.get(c, {}).get("h", 1))
 	if t == PLANET: return -1000.0   # la planète flotte : la case est du VIDE
+	if t == RAMP: return 1.0         # côté haut (les requêtes précises passent par _cell_h_at)
+	if t == LOOP3D: return 0.0       # le sol sous le looping est praticable
 	return float(app.cell_cfg.get(c, {}).get("base_h", 0))   # objet : hauteur du bloc dessous
+
+
+# hauteur du terrain À UNE POSITION précise (rampes = pente linéaire 0→1)
+func _cell_h_at(px: float, pz: float) -> float:
+	var c := Vector2i(int(floor(px)), int(floor(pz)))
+	var t: int = app.grid.get(c, EMPTY)
+	if t == RAMP:
+		var fx := px - float(c.x)
+		var fz := pz - float(c.y)
+		match str(app.cell_cfg.get(c, {}).get("axe", "X+")):
+			"X+": return fx
+			"X-": return 1.0 - fx
+			"Z+": return fz
+			_:    return 1.0 - fz
+	return _cell_h(c)
 
 
 func _build_world() -> void:
 	for k in mesh_by_cell:
 		for n in mesh_by_cell[k]: n.queue_free()
-	mesh_by_cell.clear(); coin_nodes.clear(); planets3.clear()
+	mesh_by_cell.clear(); coin_nodes.clear(); planets3.clear(); loops3.clear()
 	for en in enemies3: en.node.queue_free()
 	enemies3.clear()
 	for k in app.grid:
@@ -291,6 +318,33 @@ func _build_world() -> void:
 		if t == GROUND:
 			var h := _cell_h(k)
 			nodes.append(_box(Vector3(U, h, U), Vector3(cx, h * 0.5, cz), Color("8d6e63")))
+		elif t == RAMP:
+			var prism := PrismMesh.new()
+			prism.size = Vector3(U, 1.0, U)
+			var rmi := MeshInstance3D.new(); rmi.mesh = prism
+			rmi.material_override = _mat(Color("a1887f"))
+			rmi.position = Vector3(cx, 0.5, cz)
+			match str(app.cell_cfg.get(k, {}).get("axe", "X+")):
+				"X+": rmi.rotation_degrees = Vector3(0, 0, 0);   rmi.rotation_degrees.y = -90
+				"X-": rmi.rotation_degrees = Vector3(0, 90, 0)
+				"Z+": rmi.rotation_degrees = Vector3(0, 180, 0)
+				_:    rmi.rotation_degrees = Vector3(0, 0, 0)
+			world3.add_child(rmi)
+			nodes.append(rmi)
+		elif t == LOOP3D:
+			var lr := 3.0
+			var laxe := str(app.cell_cfg.get(k, {}).get("axe", "X"))
+			var lc := Vector3(cx, lr, cz)
+			var ltm := TorusMesh.new(); ltm.inner_radius = lr - 0.22; ltm.outer_radius = lr + 0.22
+			var lmi := MeshInstance3D.new(); lmi.mesh = ltm
+			lmi.material_override = _mat(Color("ffa726"), 0.6)
+			lmi.position = lc
+			lmi.rotation_degrees = Vector3(90, 0, 0) if laxe == "X" else Vector3(0, 0, 90)
+			world3.add_child(lmi)
+			nodes.append(lmi)
+			loops3.append({"c": lc, "axe": laxe, "r": lr})
+			# dalle au sol sous le looping (la voie continue)
+			nodes.append(_box(Vector3(U, 0.16, U), Vector3(cx, -0.08, cz), Color("9e9e9e")))
 		elif t == PLANET:
 			var pr := float(app.cell_cfg.get(k, {}).get("r", 3))
 			var pc := Vector3(cx, pr + 1.0, cz)
@@ -455,6 +509,9 @@ func _physics_process(delta: float) -> void:
 	# === GRAVITÉ RADIALE (planètes, façon Mario Galaxy) ===
 	if _planet_step(delta, yaw_in):
 		return
+	# === LOOPING 3D (rail paramétrique, physique Sonic requise) ===
+	if _loop3_step(delta):
+		return
 	if move_mode == "3d":
 		cam_yaw -= yaw_in
 	# changement de mode : tuile sous les pieds
@@ -473,12 +530,21 @@ func _physics_process(delta: float) -> void:
 				cam_yaw = atan2(o.x, o.z)   # continuité caméra au changement de mode
 	# entrées selon le mode
 	var dx := float(_dir_x()); var dz := float(_dir_y())
+	var sonic_on: bool = bool(app.level_props.get("sonic", false))
 	match move_mode:
 		"x":
-			vel3.x = dx * SPEED3
+			if sonic_on:
+				svel.x = _sonic_axis(svel.x, dx, delta, Vector3.RIGHT)
+				vel3.x = svel.x
+			else:
+				vel3.x = dx * SPEED3
 			vel3.z = clampf((lock_coord - pos3.z) * 8.0, -SPEED3, SPEED3)
 		"z":
-			vel3.z = -dx * SPEED3
+			if sonic_on:
+				svel.z = _sonic_axis(svel.z, -dx, delta, Vector3.BACK)
+				vel3.z = svel.z
+			else:
+				vel3.z = -dx * SPEED3
 			vel3.x = clampf((lock_coord - pos3.x) * 8.0, -SPEED3, SPEED3)
 		_:
 			# THIRD PERSON : stick haut = s'éloigner de la caméra
@@ -488,8 +554,26 @@ func _physics_process(delta: float) -> void:
 			var mv := fwd * (-dz) + right * dx
 			if mv.length() > 0.1:
 				mv = mv.normalized()
-			vel3.x = mv.x * SPEED3
-			vel3.z = mv.z * SPEED3
+			if sonic_on:
+				# momentum : accélère vers l'input, friction sinon, pente = force
+				var target := Vector2(mv.x, mv.z) * 9.5
+				var cur := Vector2(svel.x, svel.z)
+				if mv.length() > 0.1:
+					cur = cur.move_toward(target, 14.0 * delta)
+				else:
+					cur = cur.move_toward(Vector2.ZERO, 7.0 * delta)
+				svel.x = cur.x; svel.z = cur.y
+				vel3.x = svel.x; vel3.z = svel.z
+			else:
+				vel3.x = mv.x * SPEED3
+				vel3.z = mv.z * SPEED3
+	# force de pente SONIC : le gradient du terrain accélère/freine (au sol)
+	if sonic_on and grounded3:
+		var gx := _cell_h_at(pos3.x + 0.3, pos3.z) - _cell_h_at(pos3.x - 0.3, pos3.z)
+		var gz := _cell_h_at(pos3.x, pos3.z + 0.3) - _cell_h_at(pos3.x, pos3.z - 0.3)
+		if absf(gx) < 50.0 and absf(gz) < 50.0:   # ignore les falaises/vides
+			svel.x = clampf(svel.x - gx * 26.0 * delta, -11.0, 11.0)
+			svel.z = clampf(svel.z - gz * 26.0 * delta, -11.0, 11.0)
 	# saut + gravité
 	if grounded3 and jb3 > 0.0:
 		vel3.y = JUMP3; jb3 = 0.0; grounded3 = false
@@ -522,6 +606,69 @@ func _physics_process(delta: float) -> void:
 	for cn in coin_nodes:
 		if is_instance_valid(cn): cn.rotate_y(delta * 3.0)
 	app.queue_redraw()
+
+
+# accélération sonic le long d'un axe (voies 2.5D)
+func _sonic_axis(v: float, input: float, delta: float, _axis: Vector3) -> float:
+	if absf(input) > 0.1:
+		v = move_toward(v, input * 9.5, 14.0 * delta)
+	else:
+		v = move_toward(v, 0.0, 7.0 * delta)
+	return v
+
+
+# LOOPING 3D : rail paramétrique dans le plan vertical du looping.
+# Capture : physique Sonic active, au sol, assez vite, aligné sur le plan.
+func _loop3_step(delta: float) -> bool:
+	if on_loop3 != null:
+		var lp = on_loop3
+		var along := Vector3.RIGHT if lp.axe == "X" else Vector3.BACK
+		var rr: float = lp.r - 0.55
+		l3_th += l3_dir * (l3_v / rr) * delta
+		if l3_th >= TAU:
+			# tour complet : repose au sol, vitesse conservée
+			on_loop3 = null
+			pos3 = lp.c - Vector3(0, lp.r, 0) + Vector3(0, 0.45, 0) + along * l3_dir * 0.6
+			svel = along * l3_dir * l3_v
+			vel3 = svel
+			grounded3 = true
+			return false
+		# position sur le cercle (0 = bas, monte vers l'avant)
+		var off := along * (l3_dir * sin(l3_th) * rr) - Vector3(0, cos(l3_th) * rr, 0)
+		pos3 = lp.c + off
+		# verrouille l'axe perpendiculaire
+		if lp.axe == "X": pos3.z = lp.c.z
+		else: pos3.x = lp.c.x
+		# orientation + caméra : haut local = vers le centre du looping
+		var up_l: Vector3 = ((lp.c as Vector3) - pos3).normalized()
+		_up_step(up_l, delta * 2.0)
+		var head := along * l3_dir
+		var ct := pos3 + (Vector3.BACK if lp.axe == "X" else Vector3.RIGHT) * 8.5
+		ct.y = pos3.y
+		cam3.position = cam3.position.lerp(ct, clampf(8.0 * delta, 0.0, 1.0))
+		cam3.look_at(pos3, g_up)
+		var tb := Basis.looking_at(head.rotated((Vector3.BACK if lp.axe == "X" else Vector3.RIGHT), 0.0), up_l) if head.length() > 0.1 else player3.basis
+		player3.basis = player3.basis.slerp(tb.orthonormalized(), clampf(14.0 * delta, 0.0, 1.0))
+		player3.position = pos3 + up_l * 0.15
+		ppos = Vector2(pos3.x * CELL - PSIZE.x * 0.5, pos3.z * CELL - PSIZE.y * 0.5)
+		app.queue_redraw()
+		return true
+	# capture
+	if not bool(app.level_props.get("sonic", false)) or not grounded3:
+		return false
+	for lp in loops3:
+		var along := Vector3.RIGHT if lp.axe == "X" else Vector3.BACK
+		var perp_d: float = absf((pos3 - lp.c).dot(Vector3.BACK if lp.axe == "X" else Vector3.RIGHT))
+		var axis_d: float = (pos3 - lp.c).dot(along)
+		var v_axis: float = vel3.dot(along)
+		if perp_d < 0.8 and absf(axis_d) < 0.7 and absf(v_axis) > 5.5 and pos3.y < 1.2:
+			on_loop3 = lp
+			l3_dir = signf(v_axis)
+			l3_v = absf(v_axis)
+			l3_th = 0.0
+			app._play("spring")
+			return true
+	return false
 
 
 # pas de simulation en gravité radiale. true = géré (saute la physique normale).
@@ -622,9 +769,9 @@ func _planet_step(delta: float, yaw_in: float) -> bool:
 
 func _support() -> float:
 	var best := -1000.0
-	for cx in [int(pos3.x - PHALF), int(pos3.x + PHALF)]:
-		for cz in [int(pos3.z - PHALF), int(pos3.z + PHALF)]:
-			var h := _cell_h(Vector2i(cx, cz))
+	for ox in [-PHALF, PHALF]:
+		for oz in [-PHALF, PHALF]:
+			var h := _cell_h_at(pos3.x + ox, pos3.z + oz)
 			if h > -100.0 and h <= pos3.y + STEP3 and h > best:
 				best = h
 	return best
@@ -635,9 +782,9 @@ func _move_axis(axis: int, amount: float) -> void:
 	var np := pos3
 	np[axis] += amount
 	# bloqué si une colonne trop haute occupe la case visée
-	for cx in [int(np.x - PHALF), int(np.x + PHALF)]:
-		for cz in [int(np.z - PHALF), int(np.z + PHALF)]:
-			var h := _cell_h(Vector2i(cx, cz))
+	for ox in [-PHALF, PHALF]:
+		for oz in [-PHALF, PHALF]:
+			var h := _cell_h_at(np.x + ox, np.z + oz)
 			if h > pos3.y + STEP3:
 				return   # mur : on n'avance pas sur cet axe
 	pos3 = np
