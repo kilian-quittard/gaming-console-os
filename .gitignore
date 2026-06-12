@@ -11,6 +11,11 @@ forge/.godot/
 .frontend_*.png
 .forge_*.png
 
+# Outillage de test auto local (driver clavier + captures + logs)
+_drive.ps1
+_*.png
+_audit_log.txt
+
 # Office lock/temp files
 .~lock.*#
 ~$*
