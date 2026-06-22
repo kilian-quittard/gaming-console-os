@@ -119,6 +119,9 @@ var sel := 0
 var import_open := false
 var import_list := []
 var import_sel := 0
+# WORKSHOP v0 : feed des créations (écran propre, via screen="workshop")
+var workshop_items := []
+var workshop_sel := 0
 
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
@@ -374,6 +377,23 @@ func _self_test() -> void:
 	print("import : name='%s', tiles zone1=%d (attendu >0)" % [String(back.get("name", "")), nt])
 	grid.erase(Vector2i(10, rows - 2))   # plus de goal
 	print("validation sans goal : '%s' (attendu non vide)" % _validate_for_share())
+
+	print("=== WORKSHOP v0 (index local → liste) ===")
+	# dossier temp ISOLÉ : ne pas écraser le vrai forge_workshop de l'utilisateur
+	var wdir := "user://_selftest_workshop/"
+	DirAccess.make_dir_recursive_absolute(wdir)
+	var rd := FileAccess.open(sp, FileAccess.READ)   # sp = .spark valide exporté plus haut
+	var content := rd.get_as_text(); rd.close()
+	var wf := FileAccess.open(wdir + "selftest.spark", FileAccess.WRITE)
+	wf.store_string(content); wf.close()
+	var idxf := FileAccess.open(wdir + "index.json", FileAccess.WRITE)
+	idxf.store_string(JSON.stringify({"version": 1, "creations": [
+		{"name": "Niveau Démo", "author": "SPARK", "template": "platformer", "dim": "2D", "file": "selftest.spark"}]}))
+	idxf.close()
+	var wl := ProjectStore.workshop_list(wdir)
+	print("workshop entries : %d (attendu >=1)" % wl.size())
+	if wl.size() > 0:
+		print("  -> '%s' par %s (%s)" % [String(wl[0]["name"]), String(wl[0]["author"]), String(wl[0]["dim"])])
 	level_props = {}
 	get_tree().quit()
 
@@ -419,6 +439,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if screen == "gamedash":   _gamedash_input(e); return
 	if screen == "screenedit": _screenedit_input(e); return
 	if screen == "game":       _game_input(e); return
+	if screen == "workshop":   _workshop_input(e); return
 	if lvl_rename: _rename_input(e); return
 	if ai_open:    _ai_panel_input(e); return
 	if cfg_open:   _config_input(e); return
@@ -445,8 +466,9 @@ func _dim_input(e: InputEvent) -> void:
 func _list_input(e: InputEvent) -> void:
 	if import_open:
 		_import_input(e); return
-	# entrées = projets + "Nouveau" + "Importer"
-	var n := proj_list.size() + 2
+	# entrées = projets + "Nouveau" + "Importer" + "WORKSHOP"
+	var np := proj_list.size()
+	var n := np + 3
 	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
 		sel = (sel + 1) % n; queue_redraw()
 	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
@@ -454,12 +476,14 @@ func _list_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
 		states.change_state("DimState")
 	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
-		if sel < proj_list.size():
+		if sel < np:
 			_open_project(proj_list[sel])
-		elif sel == proj_list.size():
+		elif sel == np:
 			states.change_state("TemplateState")
-		else:
+		elif sel == np + 1:
 			_open_import()
+		else:
+			_open_workshop()
 
 
 func _open_import() -> void:
@@ -499,6 +523,37 @@ func _do_import(entry: Dictionary) -> void:
 	sel = 0
 	_set_toast("Importé : %s" % nm)
 	queue_redraw()
+
+
+# ============================================================= WORKSHOP v0
+func _open_workshop() -> void:
+	workshop_items = ProjectStore.workshop_list()   # v0 = dossier local ; v1 = HTTPRequest
+	workshop_sel = 0
+	screen = "workshop"
+	queue_redraw()
+
+
+func _workshop_input(e: InputEvent) -> void:
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+		screen = "list"; queue_redraw(); return
+	if workshop_items.is_empty():
+		return
+	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		workshop_sel = (workshop_sel + 1) % workshop_items.size(); queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		workshop_sel = (workshop_sel - 1 + workshop_items.size()) % workshop_items.size(); queue_redraw()
+	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+		_workshop_play(workshop_items[workshop_sel])
+
+
+# tape une création → on la JOUE direct (chargement éphémère, écran titre de l'auteur)
+func _workshop_play(entry: Dictionary) -> void:
+	var proj := ProjectStore.import_spark(String(entry["path"]))
+	if proj.is_empty():
+		_set_toast("Création illisible"); return
+	_apply_project_data(proj, String(proj.get("dim", "2D")), String(proj.get("template", "platformer")),
+		"▶ " + String(proj.get("name", "Création")))
+	_game_start()   # → écran titre de SA création, puis on joue
 
 
 func _tmpl_input(e: InputEvent) -> void:
@@ -1410,13 +1465,18 @@ func _parse_level(ld: Dictionary) -> Dictionary:
 
 
 func _open_project(p: Dictionary) -> void:
-	cur_dim = String(p.get("dim", "2D"))
-	cur_template = String(p.get("template", "platformer"))
-	_load_template(cur_template)
-	cur_project = String(p.get("name", ""))
 	var data = ProjectStore.load_file(String(p.get("path", "")))
 	if typeof(data) != TYPE_DICTIONARY:
 		_set_toast("Ouverture impossible"); return
+	_apply_project_data(data, String(p.get("dim", "2D")), String(p.get("template", "platformer")), String(p.get("name", "")))
+
+
+# charge un projet depuis un dict en mémoire (réutilisé : ouverture fichier ET WORKSHOP)
+func _apply_project_data(data: Dictionary, dim: String, template: String, pname: String) -> void:
+	cur_dim = dim
+	cur_template = template
+	_load_template(cur_template)
+	cur_project = pname
 	var pr = data.get("props", {})
 	level_props = pr if typeof(pr) == TYPE_DICTIONARY else {}
 	game_unlocked = maxi(1, int(data.get("progress", {}).get("unlocked", 1)))
@@ -1609,6 +1669,9 @@ func _process(delta: float) -> void:
 		return
 	if screen == "game":
 		queue_redraw()   # écrans animés (titre clignotant)
+		return
+	if screen == "workshop":
+		queue_redraw()
 		return
 	if ai_open:
 		queue_redraw()
@@ -2094,6 +2157,7 @@ func _draw() -> void:
 	if screen == "gamedash":   _draw_gamedash(vp); return
 	if screen == "screenedit": _draw_screenedit(vp); return
 	if screen == "game":       _draw_game(vp); return
+	if screen == "workshop":   _draw_workshop(vp); return
 	# jeu en mode salles : masque tout ce qui dépasse la salle courante (letterbox)
 	if mode == "play" and tmpl.wants_room_camera() and cur_room >= 0 and cur_room < rooms.size():
 		_draw_room_mask(vp)
@@ -2454,19 +2518,21 @@ func _draw_list(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
 	_ctext(f, vp.x * 0.5, 150, "Projets — %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
 	var np := proj_list.size()
-	var n := np + 2   # projets + Nouveau + Importer
-	var y0 := 200.0
+	var n := np + 3   # projets + Nouveau + Importer + WORKSHOP
+	var y0 := 196.0
 	for i in n:
-		var y := y0 + i * 44
+		var y := y0 + i * 42
 		var label: String
 		if i < np: label = "📄  " + String(proj_list[i]["name"])
 		elif i == np: label = "＋  Nouveau projet"
-		else: label = "📥  Importer une création…"
+		elif i == np + 1: label = "📥  Importer une création…"
+		else: label = "🌐  WORKSHOP — jouer des créations"
 		var box := Rect2(Vector2(vp.x * 0.5 - 230, y - 26), Vector2(460, 36))
 		if i == sel: draw_rect(box, Color(1, 1, 1, 0.12)); draw_rect(box, Color("f39c12"), false, 2.0)
 		var col: Color = Color.WHITE if i == sel else Color(1, 1, 1, 0.65)
 		if i == np: col = Color("2ecc71") if i == sel else Color(0.4, 0.8, 0.5)
 		elif i == np + 1: col = Color("4fc3f7") if i == sel else Color(0.4, 0.6, 0.75)
+		elif i == np + 2: col = Color("b388ff") if i == sel else Color(0.55, 0.45, 0.7)
 		_text(f, Vector2(vp.x * 0.5 - 210, y), label, col, 18)
 	if proj_list.is_empty():
 		_ctext(f, vp.x * 0.5, y0 - 30, "Aucun projet — crée le premier", Color(1, 1, 1, 0.4), 15)
@@ -2499,6 +2565,42 @@ func _draw_import(vp: Vector2) -> void:
 			var lbl := "📦  %s   (%s)" % [String(ent["name"]), String(ent["template"])]
 			_text(f, Vector2(o.x + 28, y), lbl, Color.WHITE if idx == import_sel else Color(1, 1, 1, 0.65), 15)
 	_ctext(f, vp.x * 0.5, o.y + h - 16, "▲▼ choisir    A importer    B retour", Color(1, 1, 1, 0.5), 13)
+
+
+func _draw_workshop(vp: Vector2) -> void:
+	_shell_bg(vp, false)
+	var f := ThemeDB.fallback_font
+	_ctext(f, vp.x * 0.5, 64, "🌐  WORKSHOP", Color("b388ff"), 34)
+	_ctext(f, vp.x * 0.5, 96, "Joue les créations de la communauté", Color(1, 1, 1, 0.55), 15)
+	if workshop_items.is_empty():
+		_ctext(f, vp.x * 0.5, vp.y * 0.45, "Aucune création disponible.", Color(1, 1, 1, 0.7), 18)
+		_ctext(f, vp.x * 0.5, vp.y * 0.45 + 28, "(WORKSHOP v0 : dépose des .spark + index.json dans)", Color(1, 1, 1, 0.4), 13)
+		_ctext(f, vp.x * 0.5, vp.y * 0.45 + 48, ProjectStore.WORKSHOP_DIR, Color(1, 1, 1, 0.4), 12)
+		_ctext(f, vp.x * 0.5, vp.y - 30, "B retour", Color(1, 1, 1, 0.5), 14)
+		return
+	# feed : cartes empilées, fenêtre défilante centrée sur la sélection
+	var card_h := 78.0
+	var gap := 12.0
+	var top := 130.0
+	var vis: int = mini(workshop_items.size(), int((vp.y - top - 60.0) / (card_h + gap)))
+	var first: int = clampi(workshop_sel - vis / 2, 0, maxi(0, workshop_items.size() - vis))
+	for k in vis:
+		var idx := first + k
+		var it: Dictionary = workshop_items[idx]
+		var y := top + k * (card_h + gap)
+		var r := Rect2(vp.x * 0.5 - 300, y, 600, card_h)
+		var on := idx == workshop_sel
+		draw_rect(r, Color("1a2233") if not on else Color("28344e"))
+		draw_rect(r, Color("b388ff") if on else Color(1, 1, 1, 0.12), false, 3.0 if on else 1.0)
+		# pastille genre/dim
+		var badge := Rect2(r.position + Vector2(14, 14), Vector2(50, card_h - 28))
+		draw_rect(badge, Color(0.4, 0.3, 0.55, 0.5))
+		_ctext(f, badge.position.x + badge.size.x * 0.5, badge.position.y + badge.size.y * 0.62, String(it["dim"]), Color.WHITE, 18)
+		_text(f, r.position + Vector2(80, 34), String(it["name"]), Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
+		_text(f, r.position + Vector2(80, 60), "par %s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
+		if on:
+			_text(f, Vector2(r.position.x + r.size.x - 90, r.position.y + card_h * 0.6), "▶ A", Color("b388ff"), 22)
+	_ctext(f, vp.x * 0.5, vp.y - 26, "▲▼ choisir    A jouer    B retour    (%d créations)" % workshop_items.size(), Color(1, 1, 1, 0.5), 13)
 
 
 func _draw_template(vp: Vector2) -> void:

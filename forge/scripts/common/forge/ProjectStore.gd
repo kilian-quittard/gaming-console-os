@@ -5,6 +5,7 @@ class_name ProjectStore
 
 const DIR := "user://forge_projects/"
 const SHARED_DIR := "user://forge_shared/"   # créations exportées/à importer (.spark)
+const WORKSHOP_DIR := "user://forge_workshop/"   # WORKSHOP v0 : "serveur" factice (dossier local)
 
 
 static func ensure_dir() -> void:
@@ -95,3 +96,40 @@ static func list_spark() -> Array:
 static func import_spark(fpath: String) -> Dictionary:
 	var proj = _unwrap(load_file(fpath))
 	return proj if typeof(proj) == TYPE_DICTIONARY else {}
+
+
+# ================================================ WORKSHOP v0
+# Source PLUGGABLE : v0 lit un index.json LOCAL (le "serveur factice").
+# v1 = remplacer ce read par un HTTPRequest vers une URL (même format index.json).
+# index.json : { "version": 1, "creations": [ {name, author, template, dim, file}, ... ] }
+static func ensure_workshop() -> void:
+	DirAccess.make_dir_recursive_absolute(WORKSHOP_DIR)
+
+
+static func workshop_list(dir := WORKSHOP_DIR) -> Array:
+	DirAccess.make_dir_recursive_absolute(dir)
+	var out := []
+	var idx = load_file(dir + "index.json")
+	if typeof(idx) == TYPE_DICTIONARY and (idx as Dictionary).has("creations"):
+		for c in (idx as Dictionary)["creations"]:
+			if typeof(c) != TYPE_DICTIONARY: continue
+			var file := String((c as Dictionary).get("file", ""))
+			if file == "" or not FileAccess.file_exists(dir + file): continue
+			out.append({"name": String((c as Dictionary).get("name", file)),
+				"author": String((c as Dictionary).get("author", "?")),
+				"template": String((c as Dictionary).get("template", "platformer")),
+				"dim": String((c as Dictionary).get("dim", "2D")),
+				"path": dir + file})
+		return out
+	# pas d'index : tolère un simple dossier rempli de .spark
+	var d := DirAccess.open(dir)
+	if d == null: return out
+	for fn in d.get_files():
+		if not fn.ends_with(".spark"): continue
+		var proj = _unwrap(load_file(dir + fn))
+		if typeof(proj) == TYPE_DICTIONARY:
+			out.append({"name": String((proj as Dictionary).get("name", fn)), "author": "?",
+				"template": String((proj as Dictionary).get("template", "platformer")),
+				"dim": String((proj as Dictionary).get("dim", "2D")),
+				"path": dir + fn})
+	return out
