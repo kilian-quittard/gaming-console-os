@@ -4,10 +4,15 @@ class_name ProjectStore
 # Pur I/O — aucune connaissance de l'éditeur ni des templates.
 
 const DIR := "user://forge_projects/"
+const SHARED_DIR := "user://forge_shared/"   # créations exportées/à importer (.spark)
 
 
 static func ensure_dir() -> void:
 	DirAccess.make_dir_recursive_absolute(DIR)
+
+
+static func ensure_shared() -> void:
+	DirAccess.make_dir_recursive_absolute(SHARED_DIR)
 
 
 static func path(pname: String) -> String:
@@ -45,3 +50,48 @@ static func save(data: Dictionary) -> bool:
 
 static func exists(pname: String) -> bool:
 	return FileAccess.file_exists(path(pname))
+
+
+# ================================================ PARTAGE (.spark)
+# Un .spark = le projet complet emballé { "spark": 1, "project": {...} }.
+# Format autonome et portable : clé USB, Discord, plus tard WORKSHOP en ligne.
+static func spark_path(pname: String) -> String:
+	return SHARED_DIR + pname.replace(" ", "_") + ".spark"
+
+
+static func export_spark(data: Dictionary) -> String:
+	ensure_shared()
+	var fp := spark_path(String(data.get("name", "creation")))
+	var f := FileAccess.open(fp, FileAccess.WRITE)
+	if f == null: return ""
+	f.store_string(JSON.stringify({"spark": 1, "project": data}))
+	f.close()
+	return fp
+
+
+# déballe un .spark (ou tolère un .json brut de projet) → dict projet, ou null
+static func _unwrap(w) -> Variant:
+	if typeof(w) != TYPE_DICTIONARY: return null
+	if (w as Dictionary).has("project"): return (w as Dictionary)["project"]
+	return w   # tolérance : fichier projet brut sans enveloppe
+
+
+static func list_spark() -> Array:
+	ensure_shared()
+	var out := []
+	var d := DirAccess.open(SHARED_DIR)
+	if d == null: return out
+	for fn in d.get_files():
+		if not fn.ends_with(".spark"): continue
+		var proj = _unwrap(load_file(SHARED_DIR + fn))
+		if typeof(proj) == TYPE_DICTIONARY:
+			out.append({"name": String((proj as Dictionary).get("name", fn)),
+				"dim": String((proj as Dictionary).get("dim", "2D")),
+				"template": String((proj as Dictionary).get("template", "platformer")),
+				"path": SHARED_DIR + fn})
+	return out
+
+
+static func import_spark(fpath: String) -> Dictionary:
+	var proj = _unwrap(load_file(fpath))
+	return proj if typeof(proj) == TYPE_DICTIONARY else {}

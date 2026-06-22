@@ -115,6 +115,10 @@ var cur_template := "platformer"
 var cur_project := ""
 var proj_list := []
 var sel := 0
+# import de créations (.spark) : modal par-dessus l'écran liste
+var import_open := false
+var import_list := []
+var import_sel := 0
 
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
@@ -354,6 +358,23 @@ func _self_test() -> void:
 	var dist: float = (Vector2(tmpl.p2.pos) - tmpl.ppos).length()
 	print("p2 ramené près de P1: %s (dist=%.0f, attendu < 200)" % [str(dist < 200.0), dist])
 	level_props = {}
+
+	print("=== PARTAGE (.spark export → import → round-trip) ===")
+	cur_dim = "2D"; cur_template = "platformer"; cur_project = "SelftestShare"
+	grid.clear(); cell_cfg.clear(); levels = {}; cur_level = "1"; screens = {}; level_props = {}
+	game_unlocked = 1
+	for x in range(cols): grid[Vector2i(x, rows - 1)] = tmpl.GROUND
+	grid[Vector2i(2, rows - 2)] = tmpl.SPAWN
+	grid[Vector2i(10, rows - 2)] = tmpl.GOAL
+	print("validation (spawn+goal) : '%s' (attendu vide)" % _validate_for_share())
+	var sp := ProjectStore.export_spark(_build_save_dict())
+	print("export : %s" % ("ok " + sp.get_file() if sp != "" else "ECHEC"))
+	var back := ProjectStore.import_spark(sp)
+	var nt: int = int((back.get("levels", {}).get("1", {}).get("tiles", {}) as Dictionary).size()) if back.has("levels") else -1
+	print("import : name='%s', tiles zone1=%d (attendu >0)" % [String(back.get("name", "")), nt])
+	grid.erase(Vector2i(10, rows - 2))   # plus de goal
+	print("validation sans goal : '%s' (attendu non vide)" % _validate_for_share())
+	level_props = {}
 	get_tree().quit()
 
 
@@ -422,7 +443,10 @@ func _dim_input(e: InputEvent) -> void:
 
 
 func _list_input(e: InputEvent) -> void:
-	var n := proj_list.size() + 1
+	if import_open:
+		_import_input(e); return
+	# entrées = projets + "Nouveau" + "Importer"
+	var n := proj_list.size() + 2
 	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
 		sel = (sel + 1) % n; queue_redraw()
 	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
@@ -432,8 +456,49 @@ func _list_input(e: InputEvent) -> void:
 	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
 		if sel < proj_list.size():
 			_open_project(proj_list[sel])
-		else:
+		elif sel == proj_list.size():
 			states.change_state("TemplateState")
+		else:
+			_open_import()
+
+
+func _open_import() -> void:
+	import_list = ProjectStore.list_spark().filter(func(s): return String(s["dim"]) == cur_dim)
+	import_sel = 0
+	import_open = true
+	queue_redraw()
+
+
+func _import_input(e: InputEvent) -> void:
+	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+		import_open = false; queue_redraw(); return
+	if import_list.is_empty():
+		return
+	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
+		import_sel = (import_sel + 1) % import_list.size(); queue_redraw()
+	elif _press(e, [KEY_UP], [JOY_BUTTON_DPAD_UP]):
+		import_sel = (import_sel - 1 + import_list.size()) % import_list.size(); queue_redraw()
+	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
+		_do_import(import_list[import_sel])
+
+
+func _do_import(entry: Dictionary) -> void:
+	var proj := ProjectStore.import_spark(String(entry["path"]))
+	if proj.is_empty():
+		_set_toast("Import impossible (fichier illisible)"); return
+	# nom unique : ne pas écraser un projet existant
+	var base := String(proj.get("name", "Création importée"))
+	var nm := base
+	var i := 2
+	while ProjectStore.exists(nm):
+		nm = "%s (%d)" % [base, i]; i += 1
+	proj["name"] = nm
+	ProjectStore.save(proj)
+	proj_list = ProjectStore.list(cur_dim)
+	import_open = false
+	sel = 0
+	_set_toast("Importé : %s" % nm)
+	queue_redraw()
 
 
 func _tmpl_input(e: InputEvent) -> void:
@@ -1023,6 +1088,7 @@ func _menu_def_build() -> Array:
 		{"label": "Vider niveau", "act": func() -> void:
 			_push_undo(); grid.clear(); cell_cfg.clear(); _set_toast("Niveau vidé")},
 		{"label": "Customiser le fond…", "act": bg_ed.open, "modal": true},
+		{"label": "📤  Partager : exporter (.spark)", "act": _export_creation},
 		{"label": "Autorun: %s" % _onoff(level_props.get("autorun", false)),
 			"act": func() -> void: _toggle_prop("autorun", "Autorun")},
 		{"label": "Physique Sonic: %s" % _onoff(level_props.get("sonic", false)),
@@ -1411,7 +1477,8 @@ func _serialize_level(L: Dictionary) -> Dictionary:
 	return out
 
 
-func _save_current() -> void:
+# construit le dict de sauvegarde complet (réutilisé par save ET export .spark)
+func _build_save_dict() -> Dictionary:
 	if cur_project == "":
 		cur_project = "Plateformer 1"
 	var all_levels := levels.duplicate()
@@ -1419,14 +1486,46 @@ func _save_current() -> void:
 	var lv := {}
 	for id in all_levels:
 		lv[id] = _serialize_level(all_levels[id])
-	var d := {"name": cur_project, "dim": cur_dim, "template": cur_template,
+	return {"name": cur_project, "dim": cur_dim, "template": cur_template,
 		"props": level_props, "screens": screens,
 		"levels": lv, "cur_level": cur_level,
 		"progress": {"unlocked": game_unlocked}}
-	if ProjectStore.save(d):
+
+
+func _save_current() -> void:
+	if ProjectStore.save(_build_save_dict()):
 		_set_toast("Sauvegardé : %s" % cur_project)
 	else:
 		_set_toast("Erreur sauvegarde")
+
+
+# validation "façon Mario Maker" : on ne partage que ce qui est jouable
+# (au moins un départ ET une arrivée, toutes zones confondues)
+func _validate_for_share() -> String:
+	var all := levels.duplicate()
+	all[cur_level] = _level_pack()
+	var has_spawn := false
+	var has_goal := false
+	for id in all:
+		var tiles: Dictionary = (all[id] as Dictionary).get("tiles", {})
+		for k in tiles:
+			if tiles[k] == tmpl.SPAWN: has_spawn = true
+			elif tiles[k] == tmpl.GOAL: has_goal = true
+	if not has_spawn: return "il manque un point de départ (Spawn)"
+	if not has_goal: return "il manque une arrivée (Goal)"
+	return ""
+
+
+func _export_creation() -> void:
+	var reason := _validate_for_share()
+	if reason != "":
+		_set_toast("Partage refusé : %s" % reason); return
+	_save_current()
+	var fp := ProjectStore.export_spark(_build_save_dict())
+	if fp == "":
+		_set_toast("Export échoué")
+	else:
+		_set_toast("Exporté → %s" % fp.get_file())
 
 
 # ---------------- sélection / copier-coller
@@ -2354,19 +2453,52 @@ func _draw_list(vp: Vector2) -> void:
 	_shell_bg(vp)
 	var f := ThemeDB.fallback_font
 	_ctext(f, vp.x * 0.5, 150, "Projets — %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
-	var n := proj_list.size() + 1
+	var np := proj_list.size()
+	var n := np + 2   # projets + Nouveau + Importer
 	var y0 := 200.0
 	for i in n:
 		var y := y0 + i * 44
-		var label: String = ("＋  Nouveau projet" if i == proj_list.size() else "📄  " + String(proj_list[i]["name"]))
+		var label: String
+		if i < np: label = "📄  " + String(proj_list[i]["name"])
+		elif i == np: label = "＋  Nouveau projet"
+		else: label = "📥  Importer une création…"
 		var box := Rect2(Vector2(vp.x * 0.5 - 230, y - 26), Vector2(460, 36))
 		if i == sel: draw_rect(box, Color(1, 1, 1, 0.12)); draw_rect(box, Color("f39c12"), false, 2.0)
 		var col: Color = Color.WHITE if i == sel else Color(1, 1, 1, 0.65)
-		if i == proj_list.size(): col = Color("2ecc71") if i == sel else Color(0.4, 0.8, 0.5)
+		if i == np: col = Color("2ecc71") if i == sel else Color(0.4, 0.8, 0.5)
+		elif i == np + 1: col = Color("4fc3f7") if i == sel else Color(0.4, 0.6, 0.75)
 		_text(f, Vector2(vp.x * 0.5 - 210, y), label, col, 18)
 	if proj_list.is_empty():
 		_ctext(f, vp.x * 0.5, y0 - 30, "Aucun projet — crée le premier", Color(1, 1, 1, 0.4), 15)
 	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A ouvrir    B retour", Color(1, 1, 1, 0.6), 16)
+	if import_open: _draw_import(vp)
+
+
+func _draw_import(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.78))   # voile
+	var w := 560.0
+	var h := 360.0
+	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
+	draw_rect(Rect2(o, Vector2(w, h)), Color("11161f"))
+	draw_rect(Rect2(o, Vector2(w, h)), Color("4fc3f7"), false, 2.0)
+	_ctext(f, vp.x * 0.5, o.y + 36, "Importer une création (%s)" % cur_dim, Color("4fc3f7"), 22)
+	if import_list.is_empty():
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42, "Aucune création à importer.", Color(1, 1, 1, 0.7), 16)
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 28, "Dépose des fichiers .spark dans :", Color(1, 1, 1, 0.45), 13)
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 48, ProjectStore.SHARED_DIR, Color(1, 1, 1, 0.45), 12)
+	else:
+		var vis: int = mini(import_list.size(), 7)
+		var first: int = clampi(import_sel - vis / 2, 0, maxi(0, import_list.size() - vis))
+		for k in vis:
+			var idx := first + k
+			var ent: Dictionary = import_list[idx]
+			var y := o.y + 70 + k * 34
+			if idx == import_sel:
+				draw_rect(Rect2(Vector2(o.x + 16, y - 18), Vector2(w - 32, 28)), Color(1, 1, 1, 0.12))
+			var lbl := "📦  %s   (%s)" % [String(ent["name"]), String(ent["template"])]
+			_text(f, Vector2(o.x + 28, y), lbl, Color.WHITE if idx == import_sel else Color(1, 1, 1, 0.65), 15)
+	_ctext(f, vp.x * 0.5, o.y + h - 16, "▲▼ choisir    A importer    B retour", Color(1, 1, 1, 0.5), 13)
 
 
 func _draw_template(vp: Vector2) -> void:
