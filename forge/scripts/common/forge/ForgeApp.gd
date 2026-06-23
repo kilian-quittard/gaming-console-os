@@ -122,6 +122,7 @@ var import_sel := 0
 # WORKSHOP v0 : feed des créations (écran propre, via screen="workshop")
 var workshop_items := []
 var workshop_sel := 0
+var from_workshop := false   # le jeu a été lancé depuis le WORKSHOP → y retourner en quittant
 
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
@@ -526,11 +527,51 @@ func _do_import(entry: Dictionary) -> void:
 
 
 # ============================================================= WORKSHOP v0
-func _open_workshop() -> void:
+func _open_workshop(reset := true) -> void:
 	workshop_items = ProjectStore.workshop_list()   # v0 = dossier local ; v1 = HTTPRequest
-	workshop_sel = 0
+	for it in workshop_items:                        # mini-rendu mis en cache (1 fois à l'ouverture)
+		it["thumb"] = _spark_thumb(String(it["path"]))
+	if reset: workshop_sel = 0
+	else: workshop_sel = clampi(workshop_sel, 0, maxi(0, workshop_items.size() - 1))
 	screen = "workshop"
 	queue_redraw()
+
+
+# parse une fois un .spark → cellules colorées de sa 1re zone (pour la miniature du feed)
+func _spark_thumb(path: String) -> Dictionary:
+	var out := {"cells": [], "mx": 16, "my": 10}
+	var proj := ProjectStore.import_spark(path)
+	if proj.is_empty(): return out
+	var lvls = proj.get("levels", {})
+	if typeof(lvls) != TYPE_DICTIONARY or (lvls as Dictionary).is_empty(): return out
+	var firstid := String((lvls as Dictionary).keys()[0])
+	var cur := String(proj.get("cur_level", ""))
+	if (lvls as Dictionary).has(cur): firstid = cur
+	var tiles = (lvls as Dictionary)[firstid].get("tiles", {})
+	var mx := 16; var my := 10
+	var cells := []
+	for k in tiles:
+		var parts: PackedStringArray = String(k).split(",")
+		if parts.size() < 2: continue
+		var x := int(parts[0]); var y := int(parts[1])
+		mx = maxi(mx, x + 1); my = maxi(my, y + 1)
+		cells.append([x, y, tmpl.COLORS.get(int(tiles[k]), Color.GRAY)])
+	return {"cells": cells, "mx": mx, "my": my}
+
+
+func _draw_thumb(r: Rect2, thumb: Dictionary) -> void:
+	draw_rect(r, Color("0d1117"))
+	var cells: Array = thumb.get("cells", [])
+	if cells.is_empty():
+		_ctext(ThemeDB.fallback_font, r.position.x + r.size.x * 0.5, r.position.y + r.size.y * 0.58, "(vide)", Color(1, 1, 1, 0.3), 11)
+		return
+	var mx: float = float(thumb.get("mx", 16))
+	var my: float = float(thumb.get("my", 10))
+	var sc: float = minf((r.size.x - 4.0) / mx, (r.size.y - 4.0) / my)
+	var ox: float = r.position.x + (r.size.x - mx * sc) * 0.5
+	var oy: float = r.position.y + (r.size.y - my * sc) * 0.5
+	for c in cells:
+		draw_rect(Rect2(ox + float(c[0]) * sc, oy + float(c[1]) * sc, maxf(sc, 1.0), maxf(sc, 1.0)), c[2])
 
 
 func _workshop_input(e: InputEvent) -> void:
@@ -552,8 +593,9 @@ func _workshop_play(entry: Dictionary) -> void:
 	if proj.is_empty():
 		_set_toast("Création illisible"); return
 	_apply_project_data(proj, String(proj.get("dim", "2D")), String(proj.get("template", "platformer")),
-		"▶ " + String(proj.get("name", "Création")))
-	_game_start()   # → écran titre de SA création, puis on joue
+		"▶ " + String(proj.get("name", "Création")), false)   # go_dash=false : pas de dash, on enchaîne le jeu
+	_game_start()           # → écran titre de SA création, puis on joue
+	from_workshop = true    # après _game_start (qui le remet à false) → retour feed en quittant
 
 
 func _tmpl_input(e: InputEvent) -> void:
@@ -701,6 +743,7 @@ func _gamedash_input(e: InputEvent) -> void:
 # débloquée au fil des victoires) → zones enchaînées → game over / écran de fin.
 func _game_start() -> void:
 	if mode == "play": _stop_play()
+	from_workshop = false   # lancé depuis le dash par défaut ; _workshop_play le repasse à true
 	game_mode = false
 	game_stage = "title"
 	game_sel = 0
@@ -783,7 +826,11 @@ func _game_quit() -> void:
 	if mode == "play": _stop_play()
 	game_mode = false
 	game_stage = ""
-	states.change_state("GameDashState")
+	if from_workshop:
+		from_workshop = false
+		_open_workshop(false)   # retour au feed (sans perdre la position)
+	else:
+		states.change_state("GameDashState")
 
 
 func _rename_input(e: InputEvent) -> void:
@@ -1472,7 +1519,8 @@ func _open_project(p: Dictionary) -> void:
 
 
 # charge un projet depuis un dict en mémoire (réutilisé : ouverture fichier ET WORKSHOP)
-func _apply_project_data(data: Dictionary, dim: String, template: String, pname: String) -> void:
+# go_dash=false : ne PAS basculer vers le dash (le WORKSHOP enchaîne direct sur _game_start)
+func _apply_project_data(data: Dictionary, dim: String, template: String, pname: String, go_dash := true) -> void:
 	cur_dim = dim
 	cur_template = template
 	_load_template(cur_template)
@@ -1523,7 +1571,8 @@ func _apply_project_data(data: Dictionary, dim: String, template: String, pname:
 	aim = Vector2(-1, -1); cam_init = false; grabbing = false
 	gfx.apply()
 	mode = "edit"; dash_sel = 0
-	states.change_state("GameDashState")
+	if go_dash:
+		states.change_state("GameDashState")
 
 
 func _serialize_level(L: Dictionary) -> Dictionary:
@@ -2592,12 +2641,15 @@ func _draw_workshop(vp: Vector2) -> void:
 		var on := idx == workshop_sel
 		draw_rect(r, Color("1a2233") if not on else Color("28344e"))
 		draw_rect(r, Color("b388ff") if on else Color(1, 1, 1, 0.12), false, 3.0 if on else 1.0)
-		# pastille genre/dim
-		var badge := Rect2(r.position + Vector2(14, 14), Vector2(50, card_h - 28))
-		draw_rect(badge, Color(0.4, 0.3, 0.55, 0.5))
-		_ctext(f, badge.position.x + badge.size.x * 0.5, badge.position.y + badge.size.y * 0.62, String(it["dim"]), Color.WHITE, 18)
-		_text(f, r.position + Vector2(80, 34), String(it["name"]), Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
-		_text(f, r.position + Vector2(80, 60), "par %s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
+		# miniature de la création (mini-rendu de la 1re zone)
+		var thumb := Rect2(r.position + Vector2(12, 11), Vector2(108, card_h - 22))
+		_draw_thumb(thumb, it.get("thumb", {}))
+		draw_rect(thumb, Color(1, 1, 1, 0.18), false, 1.0)
+		# pastille dim en coin de la miniature
+		_text(f, thumb.position + Vector2(4, 16), String(it["dim"]), Color("b388ff"), 12)
+		var tx := thumb.position.x + thumb.size.x + 16
+		_text(f, Vector2(tx, r.position.y + 32), String(it["name"]), Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
+		_text(f, Vector2(tx, r.position.y + 58), "par %s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
 		if on:
 			_text(f, Vector2(r.position.x + r.size.x - 90, r.position.y + card_h * 0.6), "▶ A", Color("b388ff"), 22)
 	_ctext(f, vp.x * 0.5, vp.y - 26, "▲▼ choisir    A jouer    B retour    (%d créations)" % workshop_items.size(), Color(1, 1, 1, 0.5), 13)
