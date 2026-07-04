@@ -3,6 +3,17 @@
   "version": 1,
   "games": [
     {
+      "title": "Cars",
+      "dev": "Rainbow Studios / THQ",
+      "genre": "Course",
+      "rating": 4.0,
+      "size_gb": 2.5,
+      "price": 0,
+      "license": "Steam (installé, DRM-free)",
+      "desc": "Le jeu du film Pixar : cours dans Radiator Springs avec Flash McQueen.",
+      "launch": { "runtime": "native", "exe": "E:/Jeux/SteamLibrary/steamapps/common/Cars/Cars.exe", "args": "", "fsr": "off", "res": "1080p" }
+    },
+    {
       "title": "SuperTuxKart",
       "dev": "SuperTuxKart Team",
       "genre": "Course",

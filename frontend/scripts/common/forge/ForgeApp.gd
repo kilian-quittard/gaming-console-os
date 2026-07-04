@@ -2735,19 +2735,18 @@ func _draw_menu(vp: Vector2) -> void:
 	var h := vis * row + head + 12.0
 	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
 	var first: int = clampi(menu_idx - vis / 2, 0, maxi(0, menu_items.size() - vis))
-	draw_rect(Rect2(o, Vector2(w, h)), Color(0, 0, 0, 0.85))
-	draw_rect(Rect2(o, Vector2(w, h)), Color("f39c12"), false, 2.0)
-	_text(f, o + Vector2(16, 30), "MENU", Color("f39c12"), 20)
+	draw_style_box(ForgeUI.sb(ForgeUI.MODAL_BG, 14, Color(ForgeUI.ACCENT.r, ForgeUI.ACCENT.g, ForgeUI.ACCENT.b, 0.85), 2, 12), Rect2(o, Vector2(w, h)))
+	_text(f, o + Vector2(18, 32), "MENU", ForgeUI.ACCENT, 20)
 	if first > 0:
-		_text(f, Vector2(o.x + w - 30, 30 + o.y), "▲", Color(1, 1, 1, 0.6), 14)
+		_text(f, Vector2(o.x + w - 30, 32 + o.y), "▲", ForgeUI.TXT_DIM, 14)
 	if first + vis < menu_items.size():
-		_text(f, Vector2(o.x + w - 30, o.y + h - 12), "▼", Color(1, 1, 1, 0.6), 14)
+		_text(f, Vector2(o.x + w - 30, o.y + h - 12), "▼", ForgeUI.TXT_DIM, 14)
 	for k in vis:
 		var i := first + k
 		var y := o.y + 56 + k * row
 		if i == menu_idx:
-			draw_rect(Rect2(Vector2(o.x + 8, y - 18), Vector2(w - 16, 28)), Color(1, 1, 1, 0.12))
-		_text(f, Vector2(o.x + 20, y), menu_items[i], Color.WHITE if i == menu_idx else Color(1, 1, 1, 0.65), 16)
+			draw_style_box(ForgeUI.sb(Color(1, 1, 1, 0.10), 8), Rect2(Vector2(o.x + 10, y - 19), Vector2(w - 20, 30)))
+		_text(f, Vector2(o.x + 22, y), menu_items[i], Color.WHITE if i == menu_idx else ForgeUI.TXT_DIM, 16)
 
 
 func _draw_toast(vp: Vector2) -> void:
@@ -2765,17 +2764,25 @@ func _draw_toast(vp: Vector2) -> void:
 func _draw_banner(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
 	var col := Color("2ecc71")
-	var box := Rect2(vp * 0.5 - Vector2(210, 95), Vector2(420, 190))
-	draw_rect(box, Color(0, 0, 0, 0.78)); draw_rect(box, col, false, 3.0)
-	_ctext(f, vp.x * 0.5, vp.y * 0.5 - 38, "GAGNÉ !", col, 40)
+	var box := Rect2(vp * 0.5 - Vector2(220, 100), Vector2(440, 200))
+	draw_style_box(ForgeUI.sb(Color(0, 0, 0, 0.55), 18, col, 2, 12), box)
+	ForgeUI.glow(self, Vector2(vp.x * 0.5, box.position.y + 52), 110.0, col)
+	_ctext(f, vp.x * 0.5, box.position.y + 62, "GAGNÉ !", col, 40)
 	# stats du run : temps + pièces (façon écran de fin)
 	var mins := int(tmpl.play_time) / 60
 	var secs := fmod(tmpl.play_time, 60.0)
 	var stats := "Temps  %d:%05.2f" % [mins, secs]
 	if tmpl.coins_total > 0:
 		stats += "      Pièces  %d/%d" % [tmpl.coins_got, tmpl.coins_total]
-	_ctext(f, vp.x * 0.5, vp.y * 0.5 + 8, stats, Color("f1c40f"), 18)
-	_ctext(f, vp.x * 0.5, vp.y * 0.5 + 62, "Y: Rejouer   Start/B: Éditeur", Color.WHITE, 16)
+	_ctext(f, vp.x * 0.5, box.position.y + 108, stats, Color("f1c40f"), 18)
+	var hints := [["Y", "rejouer"], ["ST/B", "éditeur"]]
+	var total := 0.0
+	for h in hints:
+		total += f.get_string_size(String(h[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 20.0 \
+			+ f.get_string_size(String(h[1]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 26.0
+	var hx := vp.x * 0.5 - total * 0.5
+	for h in hints:
+		hx += ForgeUI.keycap(self, Vector2(hx, box.position.y + 148), String(h[0]), String(h[1])) + 26.0
 
 
 func _text(f: Font, pos: Vector2, s: String, col: Color, size: int) -> void:
@@ -3029,60 +3036,74 @@ func _draw_game(vp: Vector2) -> void:
 				var y := 150.0 + i * 52.0
 				var locked := i >= game_unlocked
 				var r := Rect2(vp.x * 0.5 - 220, y, 440, 42)
-				if i == game_sel and not locked:
-					draw_rect(r, Color(1, 1, 1, 0.10))
-					draw_rect(r, st.accent, false, 2.0)
+				var on := i == game_sel and not locked
+				if on: r = r.grow(3.0)
+				ForgeUI.card(self, r, on, anim_t, st.accent)
 				var nm := level_name(str(ids[i]))
 				if locked:
-					_ctext(f, vp.x * 0.5, y + 28, "🔒  %s" % nm, Color(1, 1, 1, 0.25), 17)
+					_ctext(f, vp.x * 0.5, r.position.y + 28, "🔒  %s" % nm, Color(1, 1, 1, 0.25), 17)
 				else:
-					_ctext(f, vp.x * 0.5, y + 28, "%d. %s" % [i + 1, nm], Color.WHITE if i == game_sel else Color(1, 1, 1, 0.6), 17)
-			_ctext(f, vp.x * 0.5, vp.y - 18, "▲▼ choisir    A jouer    B retour", Color(1, 1, 1, 0.4), 13)
+					_ctext(f, vp.x * 0.5, r.position.y + 28, "%d. %s" % [i + 1, nm], Color.WHITE if on else ForgeUI.TXT_DIM, 17)
+			ForgeUI.footer(self, vp, [["▲▼", "choisir"], ["A", "jouer"], ["B", "retour"]])
 		"complete":
 			draw_rect(full, BG_THEMES[st.bg][0])
-			_ctext(f, vp.x * 0.5, vp.y * 0.32, "ZONE TERMINÉE !", Color("2ecc71"), 46)
-			_ctext(f, vp.x * 0.5, vp.y * 0.32 + 44, level_name(cur_level), Color(1, 1, 1, 0.7), 18)
+			var cpan := Rect2(vp * 0.5 - Vector2(300, 130), Vector2(600, 260))
+			draw_style_box(ForgeUI.sb(Color(0, 0, 0, 0.38), 18, Color("2ecc71"), 2, 10), cpan)
+			ForgeUI.glow(self, Vector2(vp.x * 0.5, cpan.position.y + 58), 120.0, Color("2ecc71"))
+			_ctext(f, vp.x * 0.5, cpan.position.y + 66, "ZONE TERMINÉE !", Color("2ecc71"), 42)
+			_ctext(f, vp.x * 0.5, cpan.position.y + 102, level_name(cur_level), Color(1, 1, 1, 0.7), 17)
 			var mins := int(game_zone_time) / 60
-			_ctext(f, vp.x * 0.5, vp.y * 0.52,
+			_ctext(f, vp.x * 0.5, cpan.position.y + 158,
 				"Temps  %d:%05.2f      Pièces  %d/%d" % [mins, fmod(game_zone_time, 60.0), game_zone_coins, game_zone_ctotal],
 				Color("f1c40f"), 19)
 			var last := game_zone_i + 1 >= level_ids().size()
-			_ctext(f, vp.x * 0.5, vp.y * 0.72, "A  %s" % ("Voir la fin" if last else "Zone suivante →"), Color.WHITE, 17)
+			ForgeUI.footer(self, vp, [["A", "Voir la fin" if last else "Zone suivante"]])
 		"over":
 			draw_rect(full, Color("12060a"))
-			_ctext(f, vp.x * 0.5, vp.y * 0.4, "GAME OVER", Color("e74c3c"), 52)
-			_ctext(f, vp.x * 0.5, vp.y * 0.6, "A Réessayer      B Zones", Color(1, 1, 1, 0.7), 17)
+			var opan := Rect2(vp * 0.5 - Vector2(260, 110), Vector2(520, 220))
+			draw_style_box(ForgeUI.sb(Color(0, 0, 0, 0.45), 18, Color("e74c3c"), 2, 10), opan)
+			ForgeUI.glow(self, Vector2(vp.x * 0.5, opan.position.y + 70), 130.0, Color("e74c3c"))
+			_ctext(f, vp.x * 0.5, opan.position.y + 86, "GAME OVER", Color("e74c3c"), 50)
+			ForgeUI.footer(self, vp, [["A", "réessayer"], ["B", "zones"]])
 		"end":
 			draw_rect(full, BG_THEMES[st.bg][0])
-			_ctext(f, vp.x * 0.5, vp.y * 0.30, "JEU TERMINÉ !", st.accent, 52)
-			_ctext(f, vp.x * 0.5, vp.y * 0.30 + 46, cur_project.to_upper(), Color.WHITE, 22)
+			var epan := Rect2(vp * 0.5 - Vector2(320, 140), Vector2(640, 280))
+			draw_style_box(ForgeUI.sb(Color(0, 0, 0, 0.38), 18, st.accent, 2, 10), epan)
+			ForgeUI.glow(self, Vector2(vp.x * 0.5, epan.position.y + 62), 140.0, st.accent)
+			_ctext(f, vp.x * 0.5, epan.position.y + 72, "JEU TERMINÉ !", st.accent, 48)
+			_ctext(f, vp.x * 0.5, epan.position.y + 112, cur_project.to_upper(), Color.WHITE, 21)
 			var tm := int(game_total_time) / 60
-			_ctext(f, vp.x * 0.5, vp.y * 0.52,
+			_ctext(f, vp.x * 0.5, epan.position.y + 172,
 				"Temps total  %d:%05.2f      Pièces  %d" % [tm, fmod(game_total_time, 60.0), game_total_coins],
 				Color("f1c40f"), 19)
 			if fmod(anim_t, 1.0) < 0.65:
-				_ctext(f, vp.x * 0.5, vp.y * 0.74, "Merci d'avoir joué  —  A retour", Color(1, 1, 1, 0.7), 16)
+				_ctext(f, vp.x * 0.5, epan.position.y + 224, "Merci d'avoir joué  ♥", Color(1, 1, 1, 0.7), 15)
+			ForgeUI.footer(self, vp, [["A", "retour"]])
 
 
 # ============================================================= GAMEDASH
 func _draw_gamedash(vp: Vector2) -> void:
 	_shell_bg(vp, false)   # pas de gros titre FORGE : les cartes occupent tout l'écran
 	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 34, cur_project.to_upper(), Color.WHITE, 22)
+	_ctext(f, vp.x * 0.5, 32, cur_project.to_upper(), Color.WHITE, 22)
+	draw_style_box(ForgeUI.sb(ForgeUI.ACCENT, 2), Rect2(vp.x * 0.5 - 24, 42, 48, 3))
 	var entries := _dash_entries()
-	var pad := 18.0; var gap_x := 12.0; var gap_y := 10.0
+	var pad := 20.0; var gap_x := 14.0; var gap_y := 12.0
 	var card_w := (vp.x - 2.0 * pad - gap_x) * 0.5
-	var label_h := 26.0
+	var label_h := 28.0
 	var rows_n: int = maxi(1, int(ceil(entries.size() / 2.0)))
-	var card_h := (vp.y - 56.0 - 30.0 - float(rows_n - 1) * gap_y) / float(rows_n)
+	var card_h := (vp.y - 60.0 - 46.0 - float(rows_n - 1) * gap_y) / float(rows_n)
 	var prev_h := card_h - label_h
 	for i in entries.size():
 		var ent: Dictionary = entries[i]
 		var ci := i % 2; var ri := i / 2
 		var x := pad + ci * (card_w + gap_x)
-		var y := 56.0 + ri * (card_h + gap_y)
+		var y := 60.0 + ri * (card_h + gap_y)
 		var sel_i := i == dash_sel
-		var pr := Rect2(x, y, card_w, prev_h)
+		var r := Rect2(x, y, card_w, card_h)
+		if sel_i: r = r.grow(3.0)   # la carte sélectionnée respire
+		ForgeUI.card(self, r, sel_i, anim_t)
+		var pr := Rect2(r.position + Vector2(6, 6), Vector2(r.size.x - 12, prev_h - 8))
 		match str(ent["key"]):
 			"playgame":
 				var stt := _screen_style("title")
@@ -3100,12 +3121,11 @@ func _draw_gamedash(vp: Vector2) -> void:
 				_ctext(f, pr.position.x + pr.size.x * 0.5, pr.position.y + pr.size.y * 0.6, "+", Color(1, 1, 1, 0.5), 38)
 			_:
 				_draw_screen_preview(pr, str(ent["key"]))
-		draw_rect(Rect2(x, y + prev_h, card_w, label_h), Color(0, 0, 0, 0.55))
-		var lcol := UI_ACCENT if sel_i else Color(1, 1, 1, 0.65)
+		draw_rect(pr, Color(1, 1, 1, 0.10), false, 1.0)   # liseré fin autour de l'aperçu
+		var lcol := UI_ACCENT if sel_i else ForgeUI.TXT_DIM
 		var lbl: String = str(ent["label"]) + ("  ●" if str(ent.get("id", "")) == cur_level and str(ent["key"]) == "level" else "")
-		_ctext(f, x + card_w * 0.5, y + prev_h + label_h * 0.72, lbl, lcol, 13)
-		draw_rect(Rect2(x, y, card_w, card_h), UI_ACCENT if sel_i else Color(1, 1, 1, 0.18), false, 3.0 if sel_i else 1.0)
-	_ctext(f, vp.x * 0.5, vp.y - 12, "◀▶▲▼ naviguer    A ouvrir    B liste projets", ForgeUI.TXT_FAINT, 12)
+		_ctext(f, r.position.x + r.size.x * 0.5, r.position.y + prev_h + label_h * 0.62, lbl, lcol, 13)
+	ForgeUI.footer(self, vp, [["◄►▲▼", "naviguer"], ["A", "ouvrir"], ["B", "projets"]])
 
 
 # mini-aperçu d'un niveau (carte du dash) : chaque tuile = un pixel coloré
@@ -3113,8 +3133,7 @@ func _draw_gamedash(vp: Vector2) -> void:
 func _draw_minimap(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
 	var panel := Rect2(vp * 0.5 - Vector2(vp.x * 0.32, vp.y * 0.32), Vector2(vp.x * 0.64, vp.y * 0.64))
-	draw_rect(panel, Color(8.0 / 255, 12.0 / 255, 18.0 / 255, 0.93))
-	draw_rect(panel, UI_ACCENT, false, 2.0)
+	draw_style_box(ForgeUI.sb(Color(8.0 / 255, 12.0 / 255, 18.0 / 255, 0.93), 16, UI_ACCENT, 2, 12), panel)
 	_ctext(f, panel.position.x + panel.size.x * 0.5, panel.position.y + 26, level_name(cur_level).to_upper(), Color.WHITE, 18)
 	var inner := Rect2(panel.position + Vector2(20, 40), panel.size - Vector2(40, 78))
 	# bornes en cases : union des salles, sinon le niveau entier
