@@ -261,11 +261,13 @@ func _embedded() -> bool:
 # rend la main au shell : retour à la scène home (embarqué) ou fin de process
 func _exit_to_shell() -> void:
 	if _embedded():
-		var root := get_tree().root
+		var tree := get_tree()
+		var root := tree.root
 		root.remove_meta("spark_shell")
 		if root.has_meta("spark_open_workshop"): root.remove_meta("spark_open_workshop")
 		root.set_meta("spark_return", true)   # le home saute le splash
-		get_tree().change_scene_to_file("res://scenes/Main.tscn")
+		SceneFade.run(tree, func() -> void:
+			tree.change_scene_to_file("res://scenes/Main.tscn"))
 	else:
 		get_tree().quit()
 
@@ -278,12 +280,13 @@ func _suspend_to_shell() -> void:
 	# telle quelle et reprend exactement là où elle était (façon Switch)
 	var tree := get_tree()
 	var root := tree.root
-	root.set_meta("spark_suspended", self)
-	root.set_meta("spark_return", true)
-	root.remove_child(self)
-	var m: Node = (load("res://scenes/Main.tscn") as PackedScene).instantiate()
-	root.add_child(m)
-	tree.current_scene = m
+	SceneFade.run(tree, func() -> void:
+		root.set_meta("spark_suspended", self)
+		root.set_meta("spark_return", true)
+		root.remove_child(self)
+		var m: Node = (load("res://scenes/Main.tscn") as PackedScene).instantiate()
+		root.add_child(m)
+		tree.current_scene = m)
 
 
 # lancé par le shell console (--workshop) : direct sur le feed de la commu

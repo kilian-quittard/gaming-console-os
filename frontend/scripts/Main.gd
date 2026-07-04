@@ -1129,13 +1129,15 @@ func _launch_item(item: Dictionary) -> void:
 # (Seuls les jeux externes passent par _spawn — process séparé, façon console.)
 func _open_forge(workshop: bool) -> void:
 	var root := get_tree().root
+	var tree := get_tree()
 	_remember_home()                       # le prochain home reprendra mode/tuile/thème
 	if root.has_meta("spark_suspended"):   # session en pause → on la REPREND telle quelle
-		_resume_forge()
+		SceneFade.run(tree, _resume_forge)
 		return
 	root.set_meta("spark_shell", true)             # ForgeApp : « lancé par le shell »
 	root.set_meta("spark_open_workshop", workshop) # → boote sur le feed si demandé
-	get_tree().change_scene_to_file("res://scenes/game/Forge.tscn")
+	SceneFade.run(tree, func() -> void:
+		tree.change_scene_to_file("res://scenes/game/Forge.tscn"))
 
 
 # état léger du home, survivant aux changements de scène (root meta)
