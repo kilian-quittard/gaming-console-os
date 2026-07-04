@@ -53,6 +53,15 @@ static func exists(pname: String) -> bool:
 	return FileAccess.file_exists(path(pname))
 
 
+# nom libre le plus proche de base : "X", "X (2)", "X (3)", ...
+static func unique_name(base: String) -> String:
+	var nm := base
+	var i := 2
+	while exists(nm):
+		nm = "%s (%d)" % [base, i]; i += 1
+	return nm
+
+
 # ================================================ PARTAGE (.spark)
 # Un .spark = le projet complet emballé { "spark": 1, "project": {...} }.
 # Format autonome et portable : clé USB, Discord, plus tard WORKSHOP en ligne.
@@ -98,6 +107,19 @@ static func import_spark(fpath: String) -> Dictionary:
 	return proj if typeof(proj) == TYPE_DICTIONARY else {}
 
 
+# transforme une création en REMIX : nouveau projet À MOI, crédit à l'original.
+# Pure donnée (pas d'I/O) — le nom unique et la sauvegarde restent au caller.
+static func make_remix(proj: Dictionary, my_name: String, my_color: int) -> Dictionary:
+	var out := proj.duplicate(true)
+	out["remix_of"] = String(proj.get("name", "Création"))
+	out["remix_by"] = String(proj.get("author", "?"))
+	out["name"] = unique_name("Remix de %s" % String(proj.get("name", "Création")))
+	out["author"] = my_name
+	out["author_color"] = my_color
+	out["progress"] = {"unlocked": 1}   # la progression du joueur original ne suit pas
+	return out
+
+
 # ================================================ WORKSHOP v0
 # Source PLUGGABLE : v0 lit un index.json LOCAL (le "serveur factice").
 # v1 = remplacer ce read par un HTTPRequest vers une URL (même format index.json).
@@ -115,21 +137,28 @@ static func workshop_list(dir := WORKSHOP_DIR) -> Array:
 			if typeof(c) != TYPE_DICTIONARY: continue
 			var file := String((c as Dictionary).get("file", ""))
 			if file == "" or not FileAccess.file_exists(dir + file): continue
-			out.append({"name": String((c as Dictionary).get("name", file)),
-				"author": String((c as Dictionary).get("author", "?")),
-				"template": String((c as Dictionary).get("template", "platformer")),
-				"dim": String((c as Dictionary).get("dim", "2D")),
-				"path": dir + file})
+			out.append(_workshop_entry(dir + file, load_file(dir + file), c))
 		return out
 	# pas d'index : tolère un simple dossier rempli de .spark
 	var d := DirAccess.open(dir)
 	if d == null: return out
 	for fn in d.get_files():
 		if not fn.ends_with(".spark"): continue
-		var proj = _unwrap(load_file(dir + fn))
-		if typeof(proj) == TYPE_DICTIONARY:
-			out.append({"name": String((proj as Dictionary).get("name", fn)), "author": "?",
-				"template": String((proj as Dictionary).get("template", "platformer")),
-				"dim": String((proj as Dictionary).get("dim", "2D")),
-				"path": dir + fn})
+		var w = load_file(dir + fn)
+		if typeof(_unwrap(w)) == TYPE_DICTIONARY:
+			out.append(_workshop_entry(dir + fn, w, {}))
 	return out
+
+
+# entrée du feed : métadonnées du .spark (autorité) complétées par l'index (fallback)
+static func _workshop_entry(fpath: String, wrapped, idx_c: Dictionary) -> Dictionary:
+	var proj = _unwrap(wrapped)
+	var p: Dictionary = proj if typeof(proj) == TYPE_DICTIONARY else {}
+	return {"name": String(p.get("name", idx_c.get("name", fpath.get_file()))),
+		"author": String(p.get("author", idx_c.get("author", "?"))),
+		"author_color": int(p.get("author_color", 0)),
+		"remix_of": String(p.get("remix_of", "")),
+		"template": String(p.get("template", idx_c.get("template", "platformer"))),
+		"dim": String(p.get("dim", idx_c.get("dim", "2D"))),
+		"path": fpath,
+		"mtime": int(FileAccess.get_modified_time(fpath))}
