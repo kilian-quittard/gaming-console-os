@@ -129,9 +129,16 @@ func _ready() -> void:
 	# console = plein écran sans bord (--windowed pour le dev)
 	if not OS.get_cmdline_args().has("--windowed"):
 		get_window().mode = Window.MODE_FULLSCREEN
+	# le home se souvient de lui-même entre deux scènes (mode/tuile/thème)
+	var hs: Dictionary = get_tree().root.get_meta("spark_home_state", {})
+	_mode = clampi(int(hs.get("mode", _mode)), 0, MODE_NAMES.size() - 1)
+	_theme = clampi(int(hs.get("theme", _theme)), 0, THEMES.size() - 1)
 	_load_catalogue()
 	_build_chrome()
 	_populate_mode(true)
+	if hs.has("sel"):
+		_selected = clampi(int(hs["sel"]), 0, maxi(0, _tiles.size() - 1))
+		_update_selection()
 	# retour depuis FORGE/WORKSHOP (même fenêtre) : pas de re-splash
 	if get_tree().root.has_meta("spark_return"):
 		get_tree().root.remove_meta("spark_return")
@@ -1122,12 +1129,19 @@ func _launch_item(item: Dictionary) -> void:
 # (Seuls les jeux externes passent par _spawn — process séparé, façon console.)
 func _open_forge(workshop: bool) -> void:
 	var root := get_tree().root
+	_remember_home()                       # le prochain home reprendra mode/tuile/thème
 	if root.has_meta("spark_suspended"):   # session en pause → on la REPREND telle quelle
 		_resume_forge()
 		return
 	root.set_meta("spark_shell", true)             # ForgeApp : « lancé par le shell »
 	root.set_meta("spark_open_workshop", workshop) # → boote sur le feed si demandé
 	get_tree().change_scene_to_file("res://scenes/game/Forge.tscn")
+
+
+# état léger du home, survivant aux changements de scène (root meta)
+func _remember_home() -> void:
+	get_tree().root.set_meta("spark_home_state",
+		{"mode": _mode, "sel": _selected, "theme": _theme})
 
 
 # ré-attache le nœud FORGE suspendu (état intact) et libère le home
