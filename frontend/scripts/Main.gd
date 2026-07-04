@@ -1131,19 +1131,27 @@ func _open_forge(workshop: bool) -> void:
 	var root := get_tree().root
 	var tree := get_tree()
 	_remember_home()                       # le prochain home reprendra mode/tuile/thème
+	var tile := _sel_tile_rect()
 	if root.has_meta("spark_suspended"):   # session en pause → on la REPREND telle quelle
-		SceneFade.run(tree, _resume_forge)
+		SceneFade.zoom(tree, _resume_forge, tile, true)
 		return
 	root.set_meta("spark_shell", true)             # ForgeApp : « lancé par le shell »
 	root.set_meta("spark_open_workshop", workshop) # → boote sur le feed si demandé
-	SceneFade.run(tree, func() -> void:
-		tree.change_scene_to_file("res://scenes/game/Forge.tscn"))
+	var go := func() -> void: tree.change_scene_to_file("res://scenes/game/Forge.tscn")
+	SceneFade.zoom(tree, go, tile, true)
 
 
-# état léger du home, survivant aux changements de scène (root meta)
+# état léger du home, survivant aux changements de scène (root meta) ;
+# tile_rect = où l'app devra « rétrécir » au retour (transition tuile)
 func _remember_home() -> void:
 	get_tree().root.set_meta("spark_home_state",
-		{"mode": _mode, "sel": _selected, "theme": _theme})
+		{"mode": _mode, "sel": _selected, "theme": _theme, "tile_rect": _sel_tile_rect()})
+
+
+func _sel_tile_rect() -> Rect2:
+	if _selected >= 0 and _selected < _tiles.size():
+		return _tiles[_selected].get_global_rect()
+	return Rect2()
 
 
 # ré-attache le nœud FORGE suspendu (état intact) et libère le home

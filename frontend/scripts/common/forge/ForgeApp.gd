@@ -266,10 +266,17 @@ func _exit_to_shell() -> void:
 		root.remove_meta("spark_shell")
 		if root.has_meta("spark_open_workshop"): root.remove_meta("spark_open_workshop")
 		root.set_meta("spark_return", true)   # le home saute le splash
-		SceneFade.run(tree, func() -> void:
-			tree.change_scene_to_file("res://scenes/Main.tscn"))
+		var go := func() -> void: tree.change_scene_to_file("res://scenes/Main.tscn")
+		SceneFade.zoom(tree, go, _home_tile_rect(), false)
 	else:
 		get_tree().quit()
+
+
+# rect de la tuile du home vers laquelle se rétracter (mémorisé par Main)
+func _home_tile_rect() -> Rect2:
+	var hs: Dictionary = get_tree().root.get_meta("spark_home_state", {})
+	var r = hs.get("tile_rect", Rect2())
+	return r if r is Rect2 else Rect2()
 
 
 # HOME : suspend (façon Switch) — la scène FORGE est DÉTACHÉE de l'arbre sans
@@ -280,13 +287,14 @@ func _suspend_to_shell() -> void:
 	# telle quelle et reprend exactement là où elle était (façon Switch)
 	var tree := get_tree()
 	var root := tree.root
-	SceneFade.run(tree, func() -> void:
+	var go := func() -> void:
 		root.set_meta("spark_suspended", self)
 		root.set_meta("spark_return", true)
 		root.remove_child(self)
 		var m: Node = (load("res://scenes/Main.tscn") as PackedScene).instantiate()
 		root.add_child(m)
-		tree.current_scene = m)
+		tree.current_scene = m
+	SceneFade.zoom(tree, go, _home_tile_rect(), false)
 
 
 # lancé par le shell console (--workshop) : direct sur le feed de la commu
