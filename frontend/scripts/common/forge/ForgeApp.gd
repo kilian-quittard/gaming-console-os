@@ -130,6 +130,7 @@ var workshop_query := ""     # recherche par nom (clavier)
 var workshop_search := false # true = la saisie clavier édite la recherche
 var workshop_plays := {}     # stats locales {fichier: nb parties} (WorkshopStats)
 var creator := {}            # profil créateur local {name, color} (CreatorProfile)
+var shell_workshop := false  # booté par la tuile WORKSHOP du shell → B au feed = retour home
 var profile_open := false    # modal d'édition du profil (écran Projets)
 var cur_author := ""         # identité du projet ouvert (affichée à l'écran titre)
 var cur_author_color := 0
@@ -245,16 +246,34 @@ func _ready() -> void:
 	queue_redraw()
 	if OS.get_cmdline_args().has("--selftest"):
 		call_deferred("_self_test")
-	if OS.get_cmdline_args().has("--shell"):
-		# lancé PAR le shell console → plein écran par-dessus lui (effet "même écran")
-		get_window().mode = Window.MODE_FULLSCREEN
-	if OS.get_cmdline_args().has("--workshop"):
+	# lancé par le shell console (même fenêtre, meta) ou en standalone (--args)
+	if OS.get_cmdline_args().has("--shell") and not _embedded():
+		get_window().mode = Window.MODE_FULLSCREEN   # standalone lancé par un shell externe
+	if OS.get_cmdline_args().has("--workshop") or bool(get_tree().root.get_meta("spark_open_workshop", false)):
 		call_deferred("_boot_workshop")   # après l'entrée du state machine (Dim)
+
+
+# true = FORGE tourne DANS l'app shell (même fenêtre, chargé par changement de scène)
+func _embedded() -> bool:
+	return get_tree().root.has_meta("spark_shell")
+
+
+# rend la main au shell : retour à la scène home (embarqué) ou fin de process
+func _exit_to_shell() -> void:
+	if _embedded():
+		var root := get_tree().root
+		root.remove_meta("spark_shell")
+		if root.has_meta("spark_open_workshop"): root.remove_meta("spark_open_workshop")
+		root.set_meta("spark_return", true)   # le home saute le splash
+		get_tree().change_scene_to_file("res://scenes/Main.tscn")
+	else:
+		get_tree().quit()
 
 
 # lancé par le shell console (--workshop) : direct sur le feed de la commu
 func _boot_workshop() -> void:
 	cur_dim = "2D"
+	shell_workshop = true
 	_scan_projects(cur_dim)   # B depuis le feed → liste projets déjà remplie
 	_open_workshop()
 
@@ -519,8 +538,8 @@ func _unhandled_input(e: InputEvent) -> void:
 
 func _dim_input(e: InputEvent) -> void:
 	# lancé par le shell console : B sur l'écran racine = rendre la main au shell
-	if OS.get_cmdline_args().has("--shell") and _press(e, [KEY_ESCAPE], [JOY_BUTTON_B]):
-		get_tree().quit(); return
+	if (_embedded() or OS.get_cmdline_args().has("--shell")) and _press(e, [KEY_ESCAPE], [JOY_BUTTON_B]):
+		_exit_to_shell(); return
 	if _press(e, [KEY_LEFT, KEY_UP], [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_UP]):
 		sel = 0; queue_redraw()
 	elif _press(e, [KEY_RIGHT, KEY_DOWN], [JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_DPAD_DOWN]):
@@ -718,6 +737,8 @@ func _workshop_input(e: InputEvent) -> void:
 	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
 		if workshop_query != "" or workshop_filter != "":   # 1er B = enlever filtres, 2e = sortir
 			workshop_query = ""; workshop_filter = ""; _workshop_refresh(true); queue_redraw(); return
+		if shell_workshop and _embedded():   # venu de la tuile WORKSHOP → retour home direct
+			_exit_to_shell(); return
 		screen = "list"; queue_redraw(); return
 	if _press(e, [KEY_S, KEY_SLASH], []):
 		workshop_search = true; queue_redraw(); return

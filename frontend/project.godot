@@ -1,22 +1,29 @@
 ; Engine configuration file.
-; Gaming Console OS — Front-end (decoupled, swappable component).
+; SPARK — l'app console : shell (home) + FORGE + WORKSHOP, une seule fenêtre.
+; Les jeux externes restent des process séparés lancés par le shell.
 ; Open this folder in Godot 4.6 stable and press F5 to run.
 
 config_version=5
 
 [application]
 
-config/name="Gaming Console OS — Frontend"
-config/description="Console home menu: PLAY / FORGE / WORKSHOP. Decoupled front-end, replaceable later."
+config/name="SPARK"
+config/description="Console SPARK : home PLAY/FORGE/WORKSHOP + création de jeux, une seule app."
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.6")
 boot_splash/show_image=false
 
 [display]
 
+window/size/viewport_width=1280
+window/size/viewport_height=720
 window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg", "res://addons/xsm/plugin.cfg")
 
 [input]
 

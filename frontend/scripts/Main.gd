@@ -125,7 +125,14 @@ func _ready() -> void:
 	_load_catalogue()
 	_build_chrome()
 	_populate_mode(true)
-	_show_splash()
+	# retour depuis FORGE/WORKSHOP (même fenêtre) : pas de re-splash
+	if get_tree().root.has_meta("spark_return"):
+		get_tree().root.remove_meta("spark_return")
+		_booting = false
+		_status.text = "De retour sur SPARK"
+		_status.modulate = _accent(_mode)
+	else:
+		_show_splash()
 
 
 func _load_catalogue() -> void:
@@ -1056,11 +1063,6 @@ func _launch_selected() -> void:
 
 # ---- Lancement réel (couche session locale) ---------------------------------
 # Le shell démarre le process, le surveille (_process), reprend la main à la fin.
-const GODOT_CANDIDATES := [
-	"C:/Users/Kilian/Godot46/Godot_v4.6-stable_win64.exe",   # dev box (fallback si pas d'exe exporté)
-]
-
-
 func _launch_item(item: Dictionary) -> void:
 	if _running_pid != -1:
 		_status.text = "%s tourne déjà — quitte-le d'abord" % _running_title
@@ -1068,9 +1070,9 @@ func _launch_item(item: Dictionary) -> void:
 		return
 	match String(item.kind):
 		"forge":
-			_spawn_forge([], "FORGE")
+			_open_forge(false)
 		"workshop":
-			_spawn_forge(["--workshop"], "WORKSHOP")
+			_open_forge(true)
 		"game", "cartridge_in":
 			var launch: Dictionary = (item.get("meta", {}) as Dictionary).get("launch", {})
 			var exe := String(launch.get("exe", ""))
@@ -1085,21 +1087,13 @@ func _launch_item(item: Dictionary) -> void:
 			_status.modulate = _icon_color(item.kind)
 
 
-# FORGE = un exe exporté si présent, sinon le binaire Godot sur le projet (dev).
-# --shell → FORGE s'ouvre plein écran par-dessus (effet console, pas de fenêtre).
-func _spawn_forge(extra: Array, title: String) -> void:
-	var forge_dir := ProjectSettings.globalize_path("res://").get_base_dir().get_base_dir().path_join("forge")
-	var args := ["--shell"] + extra
-	var exported := forge_dir.path_join("build/SPARK_FORGE.exe")
-	if FileAccess.file_exists(exported):
-		_spawn(exported, args, title)
-		return
-	for g in GODOT_CANDIDATES:
-		if FileAccess.file_exists(g):
-			_spawn(g, ["--path", forge_dir] + args, title)
-			return
-	_status.text = "FORGE introuvable (ni exe exporté, ni Godot)"
-	_status.modulate = AMBER
+# FORGE/WORKSHOP = first-party : MÊME fenêtre, simple changement de scène.
+# (Seuls les jeux externes passent par _spawn — process séparé, façon console.)
+func _open_forge(workshop: bool) -> void:
+	var root := get_tree().root
+	root.set_meta("spark_shell", true)             # ForgeApp : « lancé par le shell »
+	root.set_meta("spark_open_workshop", workshop) # → boote sur le feed si demandé
+	get_tree().change_scene_to_file("res://scenes/game/Forge.tscn")
 
 
 func _spawn(path: String, args: Array, title: String) -> void:
