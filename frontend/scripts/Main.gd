@@ -79,6 +79,13 @@ var _running_pid := -1        # -1 = rien en cours
 var _running_title := ""
 var _run_poll := 0.0          # poll 1 Hz : le process vit-il encore ?
 
+# ---- Confirmation « fermer la session FORGE en pause ? » avant un autre lancement
+var _in_confirm := false
+var _confirm_layer: Control = null
+var _confirm_exe := ""
+var _confirm_args: Array = []
+var _confirm_title := ""
+
 # Screen-stack depth: home menu <-> preview/settings overlay
 var _in_preview := false
 var _preview_layer: Control = null
@@ -129,8 +136,12 @@ func _ready() -> void:
 	if get_tree().root.has_meta("spark_return"):
 		get_tree().root.remove_meta("spark_return")
 		_booting = false
-		_status.text = "De retour sur SPARK"
-		_status.modulate = _accent(_mode)
+		if get_tree().root.has_meta("spark_suspended"):
+			_status.text = "FORGE en pause — relance la tuile pour reprendre"
+			_status.modulate = AMBER
+		else:
+			_status.text = "De retour sur SPARK"
+			_status.modulate = _accent(_mode)
 	else:
 		_show_splash()
 
@@ -851,6 +862,10 @@ func _icon_color(kind: String) -> Color:
 
 
 func _make_tile(item: Dictionary) -> Panel:
+	# session FORGE suspendue → la tuile le montre et propose la reprise
+	if String(item.get("kind", "")) in ["forge", "workshop"] and get_tree().root.has_meta("spark_suspended"):
+		item = item.duplicate()
+		item["sub"] = "● En pause — reprendre"
 	var panel := Panel.new()
 	panel.custom_minimum_size = TILE_SIZE
 	panel.pivot_offset = TILE_SIZE * 0.5
@@ -976,6 +991,19 @@ func _input(event: InputEvent) -> void:
 	if _running_pid != -1:
 		return  # une app tourne : le shell attend en arrière-plan
 
+	# Confirmation « fermer FORGE ? » : A ferme la session et lance, B annule.
+	if _in_confirm:
+		if event.is_action_pressed("ui_accept"):
+			_close_confirm()
+			_drop_suspended()
+			_populate_mode()   # la tuile FORGE perd son badge « en pause »
+			_spawn(_confirm_exe, _confirm_args, _confirm_title)
+		elif event.is_action_pressed("ui_cancel"):
+			_close_confirm()
+			_status.text = "Session FORGE conservée"
+			_status.modulate = _accent(_mode)
+		return
+
 	# Preview overlay captures input while open: A launches, B closes.
 	if _in_preview:
 		if event.is_action_pressed("ui_cancel"):
@@ -1078,7 +1106,10 @@ func _launch_item(item: Dictionary) -> void:
 			var exe := String(launch.get("exe", ""))
 			var args := Array(String(launch.get("args", "")).split(" ", false))
 			if exe != "" and FileAccess.file_exists(exe):
-				_spawn(exe, args, String(item.title))
+				if get_tree().root.has_meta("spark_suspended"):
+					_open_confirm(String(item.title), exe, args)   # préviens avant de tuer la session
+				else:
+					_spawn(exe, args, String(item.title))
 			else:
 				_status.text = "%s : pas installé sur cette machine (démo)" % item.title
 				_status.modulate = AMBER
@@ -1091,9 +1122,37 @@ func _launch_item(item: Dictionary) -> void:
 # (Seuls les jeux externes passent par _spawn — process séparé, façon console.)
 func _open_forge(workshop: bool) -> void:
 	var root := get_tree().root
+	if root.has_meta("spark_suspended"):   # session en pause → on la REPREND telle quelle
+		_resume_forge()
+		return
 	root.set_meta("spark_shell", true)             # ForgeApp : « lancé par le shell »
 	root.set_meta("spark_open_workshop", workshop) # → boote sur le feed si demandé
 	get_tree().change_scene_to_file("res://scenes/game/Forge.tscn")
+
+
+# ré-attache le nœud FORGE suspendu (état intact) et libère le home
+func _resume_forge() -> void:
+	var tree := get_tree()
+	var root := tree.root
+	var forge: Node = root.get_meta("spark_suspended")
+	root.remove_meta("spark_suspended")
+	if not is_instance_valid(forge):
+		return
+	root.add_child(forge)
+	tree.current_scene = forge
+	queue_free()   # le home se libère (FORGE redevient la scène courante)
+
+
+# ferme définitivement une session FORGE suspendue (après confirmation)
+func _drop_suspended() -> void:
+	var root := get_tree().root
+	if not root.has_meta("spark_suspended"):
+		return
+	var forge: Node = root.get_meta("spark_suspended")
+	root.remove_meta("spark_suspended")
+	if root.has_meta("spark_shell"): root.remove_meta("spark_shell")
+	if is_instance_valid(forge):
+		forge.free()
 
 
 func _spawn(path: String, args: Array, title: String) -> void:
@@ -1107,6 +1166,59 @@ func _spawn(path: String, args: Array, title: String) -> void:
 	_run_poll = 1.0
 	_status.text = "▶  %s en cours — quitte l'app pour revenir au shell" % title
 	_status.modulate = _accent(_mode)
+
+
+# ---- Modal « FORGE en pause sera fermé » --------------------------------------
+func _open_confirm(title: String, exe: String, args: Array) -> void:
+	_confirm_title = title; _confirm_exe = exe; _confirm_args = args
+	_in_confirm = true
+	var layer := Control.new()
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var veil := ColorRect.new()
+	veil.color = Color(0, 0, 0, 0.72)
+	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(veil)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var box := PanelContainer.new()
+	center.add_child(box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 18)
+	vb.custom_minimum_size = Vector2(520, 0)
+	box.add_child(vb)
+	var pad := MarginContainer.new()
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		pad.add_theme_constant_override(side, 28)
+	vb.add_child(pad)
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 14)
+	pad.add_child(inner)
+	var t := Label.new()
+	t.text = "Fermer la session FORGE ?"
+	t.add_theme_font_size_override("font_size", 26)
+	inner.add_child(t)
+	var body := Label.new()
+	body.text = "FORGE est en pause. Lancer « %s » fermera ta session\n(les changements non sauvegardés seront perdus)." % title
+	body.add_theme_font_size_override("font_size", 16)
+	body.modulate = Color(1, 1, 1, 0.75)
+	inner.add_child(body)
+	var hints := HBoxContainer.new()
+	hints.add_theme_constant_override("separation", 12)
+	hints.add_child(_make_glyph_badge("A", Color(0.30, 0.72, 0.36)))
+	hints.add_child(_hint_label("Fermer et lancer"))
+	hints.add_child(_make_glyph_badge("B", Color(0.90, 0.36, 0.36)))
+	hints.add_child(_hint_label("Garder ma session"))
+	inner.add_child(hints)
+	add_child(layer)
+	_confirm_layer = layer
+
+
+func _close_confirm() -> void:
+	_in_confirm = false
+	if _confirm_layer != null:
+		_confirm_layer.queue_free()
+		_confirm_layer = null
 
 
 func _on_app_exited() -> void:

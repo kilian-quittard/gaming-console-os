@@ -270,6 +270,22 @@ func _exit_to_shell() -> void:
 		get_tree().quit()
 
 
+# HOME : suspend (façon Switch) — la scène FORGE est DÉTACHÉE de l'arbre sans
+# être libérée (état/vars/partie intacts, plus aucun process), le home revient.
+# La reprise (Main._resume_forge) ré-attache ce même nœud tel quel.
+func _suspend_to_shell() -> void:
+	# pas de _stop_play : détaché = plus de _process → une partie en cours GÈLE
+	# telle quelle et reprend exactement là où elle était (façon Switch)
+	var tree := get_tree()
+	var root := tree.root
+	root.set_meta("spark_suspended", self)
+	root.set_meta("spark_return", true)
+	root.remove_child(self)
+	var m: Node = (load("res://scenes/Main.tscn") as PackedScene).instantiate()
+	root.add_child(m)
+	tree.current_scene = m
+
+
 # lancé par le shell console (--workshop) : direct sur le feed de la commu
 func _boot_workshop() -> void:
 	cur_dim = "2D"
@@ -516,6 +532,10 @@ func _is_btn(e: InputEvent, keys: Array, btns: Array, pressed: bool) -> bool:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	# bouton HOME (façon Switch) : suspend la session FORGE et retourne au menu —
+	# l'état complet reste vivant, la tuile du shell propose « reprendre »
+	if _embedded() and _press(e, [KEY_HOME, KEY_F1], [JOY_BUTTON_GUIDE]):
+		_suspend_to_shell(); return
 	if screen == "dim":        _dim_input(e); return
 	if screen == "list":       _list_input(e); return
 	if screen == "template":   _tmpl_input(e); return
