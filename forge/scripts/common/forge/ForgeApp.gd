@@ -2531,18 +2531,22 @@ func _draw_topbar(vp: Vector2) -> void:
 		_text(f, Vector2(x + 8, 22), tmpl.tile_name(_active_tile()), Color("f39c12"), 14)
 		_text(f, Vector2(x + 8, 42), "Curseur: %s" % cursor_mode, Color(1, 1, 1, 0.6), 12)
 	else:
+		var hud_title := "FORGE — TEST"
 		if game_mode:
-			_text(f, Vector2(16, 34), cur_project.to_upper(), Color("f39c12"), 22)
+			hud_title = cur_project.to_upper()
+			_text(f, Vector2(16, 34), hud_title, Color("f39c12"), 22)
 			_text(f, Vector2(16, 52), "%s   ♥ ×%d" % [level_name(cur_level), game_lives], Color(1, 1, 1, 0.75), 13)
 		else:
-			_text(f, Vector2(16, 34), "FORGE — TEST", Color("2ecc71"), 22)
+			_text(f, Vector2(16, 34), hud_title, Color("2ecc71"), 22)
 		var need_coins: int = int(level_props.get("win_coins", 0))
 		var coin_str := "Pièces: %d/%d" % [tmpl.coins_got, tmpl.coins_total]
 		if need_coins > 0:
 			coin_str = "Pièces: %d/%d (req. %d)" % [tmpl.coins_got, tmpl.coins_total, need_coins]
 		var coin_col := Color("f1c40f")
 		if need_coins > 0 and tmpl.coins_got < need_coins: coin_col = Color("e67e22")
-		_text(f, Vector2(240, 34), coin_str, coin_col, 18)
+		# jamais superposé à un titre long : posé après la fin du titre
+		var cx0 := maxf(240.0, 16.0 + f.get_string_size(hud_title, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x + 28.0)
+		_text(f, Vector2(cx0, 34), coin_str, coin_col, 18)
 		# clés tenues (par couleur)
 		var kx := 540.0
 		for kcol in tmpl.keys:
