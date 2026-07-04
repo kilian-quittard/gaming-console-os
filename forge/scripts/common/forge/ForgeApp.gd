@@ -138,6 +138,7 @@ var cur_remix_by := ""       # crédit remix : auteur de l'originale
 
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
+var ui_sel_f := 0.0   # position lissée du sélecteur (écrans shell : liste/dim/templates)
 
 # ---- MODE JEU COMPLET (campagne) : écran titre → zones enchaînées → fin ----
 var game_mode := false      # true = on joue le jeu (pas un test d'éditeur)
@@ -1893,6 +1894,10 @@ func _process(delta: float) -> void:
 	if screen == "workshop":
 		queue_redraw()
 		return
+	if screen == "list" or screen == "dim" or screen == "template":
+		ui_sel_f = lerpf(ui_sel_f, float(sel), minf(1.0, delta * 14.0))   # sélecteur glissant
+		queue_redraw()
+		return
 	if ai_open:
 		queue_redraw()
 		return
@@ -2676,11 +2681,14 @@ func _draw_menu(vp: Vector2) -> void:
 
 func _draw_toast(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
-	var w := toast.length() * 9.0 + 30.0
-	var o := Vector2(vp.x * 0.5 - w * 0.5, TOPBAR + 14)
-	draw_rect(Rect2(o, Vector2(w, 30)), Color(0, 0, 0, 0.75))
-	draw_rect(Rect2(o, Vector2(w, 30)), Color("f39c12"), false, 1.5)
-	_text(f, o + Vector2(15, 21), toast, Color.WHITE, 15)
+	var w := f.get_string_size(toast, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 46.0
+	# petit slide-in : arrive du haut sur les ~0.15 premières secondes
+	var slide := clampf((2.0 - toast_t) / 0.15, 0.0, 1.0)   # toast_t part de 2.0 (_set_toast)
+	var o := Vector2(vp.x * 0.5 - w * 0.5, TOPBAR + 14 - (1.0 - slide) * 26.0)
+	var r := Rect2(o, Vector2(w, 32))
+	draw_style_box(ForgeUI.sb(Color("0d1322", 0.92), 16, Color(ForgeUI.ACCENT.r, ForgeUI.ACCENT.g, ForgeUI.ACCENT.b, 0.7), 1, 6), r)
+	draw_style_box(ForgeUI.sb(ForgeUI.ACCENT, 2), Rect2(o + Vector2(12, 9), Vector2(4, 14)))
+	_text(f, o + Vector2(26, 22), toast, Color.WHITE, 15)
 
 
 func _draw_banner(vp: Vector2) -> void:
@@ -2709,131 +2717,150 @@ func _ctext(f: Font, cx: float, y: float, s: String, col: Color, size: int) -> v
 
 
 func _shell_bg(vp: Vector2, with_title := true) -> void:
-	draw_rect(Rect2(Vector2.ZERO, vp), Color("1b2838"))
+	ForgeUI.bg(self, vp)
 	if with_title:
 		var f := ThemeDB.fallback_font
-		_ctext(f, vp.x * 0.5, 90, "FORGE", Color("f39c12"), 56)
+		ForgeUI.glow(self, Vector2(vp.x * 0.5, 78.0), 170.0, ForgeUI.ACCENT)
+		_ctext(f, vp.x * 0.5, 90, "FORGE", ForgeUI.ACCENT, 56)
+		_ctext(f, vp.x * 0.5, 114, "crée · partage · joue", ForgeUI.TXT_FAINT, 13)
 
 
 func _draw_dim(vp: Vector2) -> void:
 	_shell_bg(vp)
 	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 150, "Choisis un type de création", Color(1, 1, 1, 0.7), 20)
+	_ctext(f, vp.x * 0.5, 168, "Choisis un type de création", ForgeUI.TXT_DIM, 18)
 	var opts := ["2D", "3D"]
-	var bw := 220.0; var bh := 160.0; var gap := 40.0
+	var bw := 230.0; var bh := 170.0; var gap := 44.0
 	var x0 := vp.x * 0.5 - bw - gap * 0.5
 	for i in 2:
 		var bx := x0 + i * (bw + gap)
-		var box := Rect2(Vector2(bx, vp.y * 0.5 - bh * 0.5), Vector2(bw, bh))
-		draw_rect(box, Color("223349"))
-		if i == sel: draw_rect(box, Color("f39c12"), false, 4.0)
-		_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 18, opts[i], Color.WHITE if i == sel else Color(1, 1, 1, 0.6), 60)
+		var box := Rect2(Vector2(bx, vp.y * 0.52 - bh * 0.5), Vector2(bw, bh))
+		if i == sel: box = box.grow(6.0)   # la carte choisie respire
+		ForgeUI.card(self, box, i == sel, anim_t)
+		var cy := box.position.y + box.size.y * 0.5
+		_ctext(f, box.position.x + box.size.x * 0.5, cy + 16, opts[i], Color.WHITE if i == sel else ForgeUI.TXT_DIM, 58)
 		if i == 1 and (TEMPLATES.get("3D", []) as Array).is_empty():
-			_ctext(f, bx + bw * 0.5, vp.y * 0.5 + 55, "(bientôt)", Color(1, 1, 1, 0.4), 16)
-	_ctext(f, vp.x * 0.5, vp.y - 40, "‹ › choisir    A valider", Color(1, 1, 1, 0.6), 16)
+			_ctext(f, box.position.x + box.size.x * 0.5, cy + 52, "bientôt", ForgeUI.TXT_FAINT, 14)
+	ForgeUI.footer(self, vp, [["◄ ►", "choisir"], ["A", "valider"]])
 
 
 func _draw_list(vp: Vector2) -> void:
 	_shell_bg(vp)
 	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 150, "Projets — %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
+	_ctext(f, vp.x * 0.5, 158, "Projets — %s" % cur_dim, ForgeUI.TXT_DIM, 17)
 	var np := proj_list.size()
 	var n := np + 3   # projets + Nouveau + Importer + WORKSHOP
-	var y0 := 196.0
+	var y0 := 192.0
+	var row_h := 46.0
+	# sélecteur glissant (ui_sel_f lissé dans _process)
+	var sel_r := Rect2(Vector2(vp.x * 0.5 - 244, y0 + ui_sel_f * row_h - 20), Vector2(488, 40))
+	ForgeUI.card(self, sel_r, true, anim_t)
 	for i in n:
-		var y := y0 + i * 42
+		var y := y0 + i * row_h
 		var label: String
-		if i < np: label = "📄  " + String(proj_list[i]["name"])
-		elif i == np: label = "＋  Nouveau projet"
-		elif i == np + 1: label = "📥  Importer une création…"
-		else: label = "🌐  WORKSHOP — jouer des créations"
-		var box := Rect2(Vector2(vp.x * 0.5 - 230, y - 26), Vector2(460, 36))
-		if i == sel: draw_rect(box, Color(1, 1, 1, 0.12)); draw_rect(box, Color("f39c12"), false, 2.0)
-		var col: Color = Color.WHITE if i == sel else Color(1, 1, 1, 0.65)
-		if i == np: col = Color("2ecc71") if i == sel else Color(0.4, 0.8, 0.5)
-		elif i == np + 1: col = Color("4fc3f7") if i == sel else Color(0.4, 0.6, 0.75)
-		elif i == np + 2: col = Color("b388ff") if i == sel else Color(0.55, 0.45, 0.7)
-		_text(f, Vector2(vp.x * 0.5 - 210, y), label, col, 18)
+		var col: Color
+		if i < np:
+			label = "📄  " + String(proj_list[i]["name"]); col = Color.WHITE if i == sel else ForgeUI.TXT_DIM
+		elif i == np:
+			label = "＋  Nouveau projet"; col = ForgeUI.GREEN if i == sel else ForgeUI.GREEN.darkened(0.25)
+		elif i == np + 1:
+			label = "📥  Importer une création…"; col = ForgeUI.CYAN if i == sel else ForgeUI.CYAN.darkened(0.3)
+		else:
+			label = "🌐  WORKSHOP — jouer des créations"; col = ForgeUI.PURPLE if i == sel else ForgeUI.PURPLE.darkened(0.3)
+		_text(f, Vector2(vp.x * 0.5 - 224, y + 6), label, col, 18)
 	if proj_list.is_empty():
-		_ctext(f, vp.x * 0.5, y0 - 30, "Aucun projet — crée le premier", Color(1, 1, 1, 0.4), 15)
+		_ctext(f, vp.x * 0.5, y0 - 26, "Aucun projet — crée le premier", ForgeUI.TXT_FAINT, 14)
 	# chip profil créateur (haut droite) : avatar + nom — "le créateur est VU"
 	var av := CreatorProfile.avatar_color(creator)
 	var cname := String(creator.get("name", CreatorProfile.DEFAULT_NAME))
-	var chip_x := vp.x - 60.0 - f.get_string_size(cname, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	draw_circle(Vector2(chip_x, 44), 11.0, av)
-	_ctext(f, chip_x, 49, CreatorProfile.initial(cname), Color("11161f"), 13)
-	_text(f, Vector2(chip_x + 18, 49), cname, Color(1, 1, 1, 0.7), 14)
-	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A ouvrir    Y profil    B retour", Color(1, 1, 1, 0.6), 16)
+	var cw := f.get_string_size(cname, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	var chip_r := Rect2(Vector2(vp.x - cw - 74.0, 28), Vector2(cw + 50.0, 34))
+	draw_style_box(ForgeUI.sb(Color(1, 1, 1, 0.06), 17, Color(1, 1, 1, 0.14), 1), chip_r)
+	ForgeUI.avatar(self, chip_r.position + Vector2(19, 17), 11.0, av, CreatorProfile.initial(cname))
+	_text(f, chip_r.position + Vector2(38, 22), cname, ForgeUI.TXT_DIM, 14)
+	ForgeUI.footer(self, vp, [["▲▼", "choisir"], ["A", "ouvrir"], ["Y", "profil"], ["B", "retour"]])
 	if import_open: _draw_import(vp)
 	if profile_open: _draw_profile(vp)
 
 
 func _draw_import(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
-	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.78))   # voile
-	var w := 560.0
-	var h := 360.0
-	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
-	draw_rect(Rect2(o, Vector2(w, h)), Color("11161f"))
-	draw_rect(Rect2(o, Vector2(w, h)), Color("4fc3f7"), false, 2.0)
-	_ctext(f, vp.x * 0.5, o.y + 36, "Importer une création (%s)" % cur_dim, Color("4fc3f7"), 22)
+	var r := ForgeUI.modal(self, vp, 560.0, 360.0, ForgeUI.CYAN)
+	var o := r.position
+	var w := r.size.x
+	var h := r.size.y
+	_ctext(f, vp.x * 0.5, o.y + 38, "Importer une création (%s)" % cur_dim, ForgeUI.CYAN, 21)
 	if import_list.is_empty():
-		_ctext(f, vp.x * 0.5, o.y + h * 0.42, "Aucune création à importer.", Color(1, 1, 1, 0.7), 16)
-		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 28, "Dépose des fichiers .spark dans :", Color(1, 1, 1, 0.45), 13)
-		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 48, ProjectStore.SHARED_DIR, Color(1, 1, 1, 0.45), 12)
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42, "Aucune création à importer.", ForgeUI.TXT, 16)
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 28, "Dépose des fichiers .spark dans :", ForgeUI.TXT_DIM, 13)
+		_ctext(f, vp.x * 0.5, o.y + h * 0.42 + 48, ProjectStore.SHARED_DIR, ForgeUI.TXT_DIM, 12)
 	else:
 		var vis: int = mini(import_list.size(), 7)
 		var first: int = clampi(import_sel - vis / 2, 0, maxi(0, import_list.size() - vis))
 		for k in vis:
 			var idx := first + k
 			var ent: Dictionary = import_list[idx]
-			var y := o.y + 70 + k * 34
+			var y := o.y + 72 + k * 36
 			if idx == import_sel:
-				draw_rect(Rect2(Vector2(o.x + 16, y - 18), Vector2(w - 32, 28)), Color(1, 1, 1, 0.12))
+				draw_style_box(ForgeUI.sb(Color(1, 1, 1, 0.10), 8), Rect2(Vector2(o.x + 16, y - 19), Vector2(w - 32, 30)))
 			var lbl := "📦  %s   (%s)" % [String(ent["name"]), String(ent["template"])]
-			_text(f, Vector2(o.x + 28, y), lbl, Color.WHITE if idx == import_sel else Color(1, 1, 1, 0.65), 15)
-	_ctext(f, vp.x * 0.5, o.y + h - 16, "▲▼ choisir    A importer    B retour", Color(1, 1, 1, 0.5), 13)
+			_text(f, Vector2(o.x + 30, y), lbl, Color.WHITE if idx == import_sel else ForgeUI.TXT_DIM, 15)
+	_ctext(f, vp.x * 0.5, o.y + h - 18, "▲▼ choisir    A importer    B retour", ForgeUI.TXT_FAINT, 13)
 
 
 # modal PROFIL : nom (clavier) + couleur d'avatar (◄►) — signé sur chaque création
 func _draw_profile(vp: Vector2) -> void:
 	var f := ThemeDB.fallback_font
-	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.78))   # voile
-	var w := 460.0
-	var h := 300.0
-	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
-	draw_rect(Rect2(o, Vector2(w, h)), Color("11161f"))
-	draw_rect(Rect2(o, Vector2(w, h)), Color("f39c12"), false, 2.0)
-	_ctext(f, vp.x * 0.5, o.y + 36, "Profil créateur", Color("f39c12"), 22)
-	_ctext(f, vp.x * 0.5, o.y + 60, "Ton nom + ton avatar signent tes créations", Color(1, 1, 1, 0.45), 13)
-	# gros avatar de prévisualisation
+	var r := ForgeUI.modal(self, vp, 460.0, 310.0, ForgeUI.ACCENT)
+	var o := r.position
+	var h := r.size.y
+	_ctext(f, vp.x * 0.5, o.y + 38, "Profil créateur", ForgeUI.ACCENT, 21)
+	_ctext(f, vp.x * 0.5, o.y + 62, "Ton nom + ton avatar signent tes créations", ForgeUI.TXT_DIM, 13)
+	# gros avatar de prévisualisation (halo + pastilles de couleurs dispo)
 	var av := CreatorProfile.avatar_color(creator)
 	var cname := String(creator.get("name", ""))
-	draw_circle(Vector2(vp.x * 0.5, o.y + 122), 34.0, av)
-	_ctext(f, vp.x * 0.5, o.y + 132, CreatorProfile.initial(cname), Color("11161f"), 30)
-	_ctext(f, vp.x * 0.5, o.y + 172, "◄  couleur  ►", Color(1, 1, 1, 0.4), 12)
+	ForgeUI.glow(self, Vector2(vp.x * 0.5, o.y + 122), 70.0, av)
+	ForgeUI.avatar(self, Vector2(vp.x * 0.5, o.y + 122), 34.0, av, CreatorProfile.initial(cname))
+	var npal := CreatorProfile.AVATAR_COLORS.size()
+	var px0 := vp.x * 0.5 - (npal - 1) * 11.0
+	for i in npal:
+		var pc: Color = CreatorProfile.AVATAR_COLORS[i]
+		draw_circle(Vector2(px0 + i * 22.0, o.y + 174), 6.0 if i == int(creator.get("color", 0)) else 4.0, pc)
 	# champ nom (curseur clignotant)
 	var shown := cname + ("_" if int(anim_t * 2.0) % 2 == 0 else " ")
-	draw_rect(Rect2(Vector2(o.x + 90, o.y + 192), Vector2(w - 180, 34)), Color(1, 1, 1, 0.08))
-	_ctext(f, vp.x * 0.5, o.y + 215, shown, Color.WHITE, 18)
-	_ctext(f, vp.x * 0.5, o.y + h - 20, "clavier : nom    A/Entrée valider", Color(1, 1, 1, 0.5), 13)
+	draw_style_box(ForgeUI.sb(Color(1, 1, 1, 0.08), 10, Color(1, 1, 1, 0.15), 1), Rect2(Vector2(o.x + 90, o.y + 196), Vector2(r.size.x - 180, 36)))
+	_ctext(f, vp.x * 0.5, o.y + 220, shown, Color.WHITE, 18)
+	_ctext(f, vp.x * 0.5, o.y + h - 20, "clavier : nom    ◄ ► couleur    A valider", ForgeUI.TXT_FAINT, 13)
 
 
 func _draw_workshop(vp: Vector2) -> void:
 	_shell_bg(vp, false)
 	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 64, "🌐  WORKSHOP", Color("b388ff"), 34)
-	_ctext(f, vp.x * 0.5, 96, "Joue les créations de la communauté", Color(1, 1, 1, 0.55), 15)
-	# barre d'état : tri · filtre · recherche (mode saisie = champ surligné)
+	ForgeUI.header(self, vp, "🌐  WORKSHOP", "Joue les créations de la communauté", ForgeUI.PURPLE)
+	# barre d'état : tri · filtre · recherche (chips ; mode saisie = champ surligné)
 	var sort_lbl := String({"recent": "récent", "joués": "plus joués", "nom": "A→Z"}.get(workshop_sort, workshop_sort))
 	var filt_lbl := workshop_filter if workshop_filter != "" else "tous"
 	if workshop_search:
 		var q := workshop_query + ("_" if int(anim_t * 2.0) % 2 == 0 else " ")
-		_ctext(f, vp.x * 0.5, 122, "Recherche : %s" % q, Color("f39c12"), 15)
+		var qw := f.get_string_size("Recherche : " + q, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 28.0
+		draw_style_box(ForgeUI.sb(Color(ForgeUI.ACCENT.r, ForgeUI.ACCENT.g, ForgeUI.ACCENT.b, 0.14), 13, ForgeUI.ACCENT, 1),
+			Rect2(Vector2(vp.x * 0.5 - qw * 0.5, 114), Vector2(qw, 26)))
+		_ctext(f, vp.x * 0.5, 132, "Recherche : %s" % q, ForgeUI.ACCENT, 14)
 	else:
-		var status := "Tri : %s    ·    Filtre : %s" % [sort_lbl, filt_lbl]
-		if workshop_query != "": status += "    ·    « %s »" % workshop_query
-		_ctext(f, vp.x * 0.5, 122, status, Color(1, 1, 1, 0.45), 13)
+		var c1 := "tri  %s" % sort_lbl
+		var c2 := "filtre  %s" % filt_lbl
+		var w1 := f.get_string_size(c1, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 16.0
+		var w2 := f.get_string_size(c2, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 16.0
+		var w3 := 0.0
+		var c3 := ""
+		if workshop_query != "":
+			c3 = "« %s »" % workshop_query
+			w3 = f.get_string_size(c3, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 16.0 + 10.0
+		var x := vp.x * 0.5 - (w1 + 10.0 + w2 + w3) * 0.5
+		x += ForgeUI.chip(self, Vector2(x, 114), c1, ForgeUI.PURPLE) + 10.0
+		x += ForgeUI.chip(self, Vector2(x, 114), c2, ForgeUI.CYAN) + 10.0
+		if c3 != "":
+			ForgeUI.chip(self, Vector2(x, 114), c3, ForgeUI.ACCENT)
 	if workshop_items.is_empty():
 		if workshop_all.is_empty():
 			_ctext(f, vp.x * 0.5, vp.y * 0.45, "Aucune création disponible.", Color(1, 1, 1, 0.7), 18)
@@ -2856,49 +2883,51 @@ func _draw_workshop(vp: Vector2) -> void:
 		var y := top + k * (card_h + gap)
 		var r := Rect2(vp.x * 0.5 - 300, y, 600, card_h)
 		var on := idx == workshop_sel
-		draw_rect(r, Color("1a2233") if not on else Color("28344e"))
-		draw_rect(r, Color("b388ff") if on else Color(1, 1, 1, 0.12), false, 3.0 if on else 1.0)
+		if on: r = r.grow(3.0)   # la carte sélectionnée respire
+		ForgeUI.card(self, r, on, anim_t, ForgeUI.PURPLE)
 		# miniature de la création (mini-rendu de la 1re zone)
-		var thumb := Rect2(r.position + Vector2(12, 11), Vector2(108, card_h - 22))
+		var thumb := Rect2(r.position + Vector2(12, 11), Vector2(108, r.size.y - 22))
 		_draw_thumb(thumb, it.get("thumb", {}))
 		draw_rect(thumb, Color(1, 1, 1, 0.18), false, 1.0)
 		# pastille dim en coin de la miniature
-		_text(f, thumb.position + Vector2(4, 16), String(it["dim"]), Color("b388ff"), 12)
+		_text(f, thumb.position + Vector2(4, 16), String(it["dim"]), ForgeUI.PURPLE, 12)
 		var tx := thumb.position.x + thumb.size.x + 16
 		var nm := String(it["name"])
 		if String(it.get("remix_of", "")) != "": nm = "↻ " + nm   # badge remix
 		_text(f, Vector2(tx, r.position.y + 32), nm, Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
 		# avatar (cercle + initiale) + auteur + genre
 		var acol: Color = CreatorProfile.AVATAR_COLORS[clampi(int(it.get("author_color", 0)), 0, CreatorProfile.AVATAR_COLORS.size() - 1)]
-		draw_circle(Vector2(tx + 9, r.position.y + 53), 9.0, acol)
-		_ctext(f, tx + 9, r.position.y + 57, CreatorProfile.initial(String(it["author"])), Color("11161f"), 11)
-		_text(f, Vector2(tx + 24, r.position.y + 58), "%s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
+		ForgeUI.avatar(self, Vector2(tx + 9, r.position.y + 53), 9.0, acol, CreatorProfile.initial(String(it["author"])))
+		_text(f, Vector2(tx + 26, r.position.y + 58), "%s   ·   %s" % [String(it["author"]), String(it["template"])], ForgeUI.TXT_DIM, 13)
 		# nb de parties locales (▶ N) en haut à droite de la carte
 		var np := WorkshopStats.plays_of(workshop_plays, String(it["path"]).get_file())
 		if np > 0:
 			var ptxt := "▶ %d" % np
-			_text(f, Vector2(r.position.x + r.size.x - 14 - f.get_string_size(ptxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x, r.position.y + 24), ptxt, Color(1, 1, 1, 0.45), 13)
+			var pw := f.get_string_size(ptxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 16.0
+			ForgeUI.chip(self, Vector2(r.position.x + r.size.x - pw - 12.0, r.position.y + 10), ptxt, ForgeUI.TXT_DIM)
 		if on:
-			_text(f, Vector2(r.position.x + r.size.x - 90, r.position.y + card_h * 0.72), "▶ A", Color("b388ff"), 22)
-	_ctext(f, vp.x * 0.5, vp.y - 26, "A jouer    X remixer    Y tri    L/R filtre    S rechercher    B retour    (%d)" % workshop_items.size(), Color(1, 1, 1, 0.5), 13)
+			_text(f, Vector2(r.position.x + r.size.x - 84, r.position.y + r.size.y * 0.72), "▶ A", ForgeUI.PURPLE, 22)
+	ForgeUI.footer(self, vp, [["A", "jouer"], ["X", "remixer"], ["Y", "tri"], ["L R", "filtre"], ["S", "chercher"], ["B", "retour"]])
+	_ctext(f, vp.x - 30, vp.y - 22, "%d" % workshop_items.size(), ForgeUI.TXT_FAINT, 12)
 
 
 func _draw_template(vp: Vector2) -> void:
 	_shell_bg(vp)
 	var f := ThemeDB.fallback_font
-	_ctext(f, vp.x * 0.5, 150, "Nouveau projet — templates %s" % cur_dim, Color(1, 1, 1, 0.8), 22)
+	_ctext(f, vp.x * 0.5, 158, "Nouveau projet — templates %s" % cur_dim, ForgeUI.TXT_DIM, 17)
 	var list: Array = TEMPLATES.get(cur_dim, [])
 	if list.is_empty():
-		_ctext(f, vp.x * 0.5, vp.y * 0.5, "Aucun template %s pour l'instant (bientôt)" % cur_dim, Color(1, 1, 1, 0.5), 20)
+		_ctext(f, vp.x * 0.5, vp.y * 0.5, "Aucun template %s pour l'instant (bientôt)" % cur_dim, ForgeUI.TXT_DIM, 20)
 	else:
-		var y0 := 220.0
+		var y0 := 208.0
+		var row_h := 56.0
 		for i in list.size():
-			var y := y0 + i * 50
-			var box := Rect2(Vector2(vp.x * 0.5 - 200, y - 30), Vector2(400, 42))
-			draw_rect(box, Color("223349"))
-			if i == sel: draw_rect(box, Color("f39c12"), false, 3.0)
-			_ctext(f, vp.x * 0.5, y, String(list[i]["name"]), Color.WHITE if i == sel else Color(1, 1, 1, 0.65), 22)
-	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A créer    B retour", Color(1, 1, 1, 0.6), 16)
+			var box := Rect2(Vector2(vp.x * 0.5 - 210, y0 + i * row_h), Vector2(420, 46))
+			if i == sel: box = box.grow(3.0)
+			ForgeUI.card(self, box, i == sel, anim_t, ForgeUI.GREEN)
+			_ctext(f, vp.x * 0.5, box.position.y + box.size.y * 0.5 + 8, String(list[i]["name"]),
+				Color.WHITE if i == sel else ForgeUI.TXT_DIM, 21)
+	ForgeUI.footer(self, vp, [["▲▼", "choisir"], ["A", "créer"], ["B", "retour"]])
 
 
 # ============================================================= MODE JEU (écrans)
@@ -3005,7 +3034,7 @@ func _draw_gamedash(vp: Vector2) -> void:
 		var lbl: String = str(ent["label"]) + ("  ●" if str(ent.get("id", "")) == cur_level and str(ent["key"]) == "level" else "")
 		_ctext(f, x + card_w * 0.5, y + prev_h + label_h * 0.72, lbl, lcol, 13)
 		draw_rect(Rect2(x, y, card_w, card_h), UI_ACCENT if sel_i else Color(1, 1, 1, 0.18), false, 3.0 if sel_i else 1.0)
-	_ctext(f, vp.x * 0.5, vp.y - 14, "◀▶▲▼ naviguer    A ouvrir    B liste projets", Color(1, 1, 1, 0.45), 13)
+	_ctext(f, vp.x * 0.5, vp.y - 12, "◀▶▲▼ naviguer    A ouvrir    B liste projets", ForgeUI.TXT_FAINT, 12)
 
 
 # mini-aperçu d'un niveau (carte du dash) : chaque tuile = un pixel coloré
