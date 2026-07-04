@@ -245,6 +245,18 @@ func _ready() -> void:
 	queue_redraw()
 	if OS.get_cmdline_args().has("--selftest"):
 		call_deferred("_self_test")
+	if OS.get_cmdline_args().has("--shell"):
+		# lancé PAR le shell console → plein écran par-dessus lui (effet "même écran")
+		get_window().mode = Window.MODE_FULLSCREEN
+	if OS.get_cmdline_args().has("--workshop"):
+		call_deferred("_boot_workshop")   # après l'entrée du state machine (Dim)
+
+
+# lancé par le shell console (--workshop) : direct sur le feed de la commu
+func _boot_workshop() -> void:
+	cur_dim = "2D"
+	_scan_projects(cur_dim)   # B depuis le feed → liste projets déjà remplie
+	_open_workshop()
 
 
 func _load_template(kind: String) -> void:
@@ -506,6 +518,9 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _dim_input(e: InputEvent) -> void:
+	# lancé par le shell console : B sur l'écran racine = rendre la main au shell
+	if OS.get_cmdline_args().has("--shell") and _press(e, [KEY_ESCAPE], [JOY_BUTTON_B]):
+		get_tree().quit(); return
 	if _press(e, [KEY_LEFT, KEY_UP], [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_UP]):
 		sel = 0; queue_redraw()
 	elif _press(e, [KEY_RIGHT, KEY_DOWN], [JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_DPAD_DOWN]):

@@ -47,10 +47,11 @@ const GUTTER := 40         # inner side padding so a hovered edge tile isn't cli
 var CONTENT := [
 	[ # GAMING (fallback)
 		{"title": "CARTOUCHE", "sub": "Insérez une cartouche", "kind": "cartridge"},
+		{"title": "WORKSHOP", "sub": "Créations de la commu", "kind": "workshop"},
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
 	],
 	[ # TRAVAIL
-		{"title": "FORGE", "sub": "Godot", "kind": "forge"},
+		{"title": "FORGE", "sub": "Crée tes jeux", "kind": "forge"},
 		{"title": "Pixel Art", "sub": "Éditeur", "kind": "pixel"},
 		{"title": "Docs Web", "sub": "Navigateur", "kind": "web"},
 		{"title": "Store", "sub": "Ajouter", "kind": "store"},
@@ -72,6 +73,11 @@ var _mode := 0
 var _theme := 1
 var _selected := 0
 var _cartridge_inserted := false
+
+# ---- Session : app en cours lancée par le shell (jeu / FORGE / WORKSHOP)
+var _running_pid := -1        # -1 = rien en cours
+var _running_title := ""
+var _run_poll := 0.0          # poll 1 Hz : le process vit-il encore ?
 
 # Screen-stack depth: home menu <-> preview/settings overlay
 var _in_preview := false
@@ -113,6 +119,9 @@ var _status: Label
 
 
 func _ready() -> void:
+	# console = plein écran sans bord (--windowed pour le dev)
+	if not OS.get_cmdline_args().has("--windowed"):
+		get_window().mode = Window.MODE_FULLSCREEN
 	_load_catalogue()
 	_build_chrome()
 	_populate_mode(true)
@@ -138,6 +147,7 @@ func _load_catalogue() -> void:
 			"kind": "game",
 			"meta": g,
 		})
+	gaming.append({"title": "WORKSHOP", "sub": "Créations de la commu", "kind": "workshop"})
 	gaming.append({"title": "Store", "sub": "Ajouter", "kind": "store"})
 	CONTENT[0] = gaming
 
@@ -407,6 +417,13 @@ func _process(delta: float) -> void:
 	if _wave_node != null and is_instance_valid(_wave_node):
 		_wave_phase += delta * 1.7
 		_wave_node.queue_redraw()
+	# surveille l'app en cours : à sa fermeture → retour au shell (focus repris)
+	if _running_pid != -1:
+		_run_poll -= delta
+		if _run_poll <= 0.0:
+			_run_poll = 1.0
+			if not OS.is_process_running(_running_pid):
+				_on_app_exited()
 
 
 func _draw_waves(c: Control) -> void:
@@ -620,7 +637,7 @@ func _draw_icon(c: Control, kind: String, color: Color) -> void:
 		"cartridge_in": _draw_cartridge(c, color, true)
 		"forge": _draw_anvil(c, color)
 		"pixel": _draw_pixel(c, color)
-		"web": _draw_web(c, color)
+		"web", "workshop": _draw_web(c, color)
 		"store": _draw_plus(c, color)
 		_: _draw_play(c, color)
 
@@ -821,6 +838,7 @@ func _bg_bottom(mode: int) -> Color:
 func _icon_color(kind: String) -> Color:
 	match kind:
 		"cartridge", "cartridge_in": return AMBER
+		"workshop": return Color(0.70, 0.53, 1.0)   # violet commu (raccord FORGE)
 		"store": return Color(0.55, 0.56, 0.64)
 		_: return _accent(_mode)
 
@@ -948,6 +966,8 @@ func _update_scroll_and_arrows() -> void:
 func _input(event: InputEvent) -> void:
 	if _booting:
 		return  # ignore input during the boot splash
+	if _running_pid != -1:
+		return  # une app tourne : le shell attend en arrière-plan
 
 	# Preview overlay captures input while open: A launches, B closes.
 	if _in_preview:
@@ -1031,8 +1051,79 @@ func _launch_selected() -> void:
 		_status.text = "Insérez une cartouche"
 		_status.modulate = AMBER
 		return
-	_status.text = "→  %s  (lancement à câbler)" % item.title
-	_status.modulate = _icon_color(item.kind)
+	_launch_item(item)
+
+
+# ---- Lancement réel (couche session locale) ---------------------------------
+# Le shell démarre le process, le surveille (_process), reprend la main à la fin.
+const GODOT_CANDIDATES := [
+	"C:/Users/Kilian/Godot46/Godot_v4.6-stable_win64.exe",   # dev box (fallback si pas d'exe exporté)
+]
+
+
+func _launch_item(item: Dictionary) -> void:
+	if _running_pid != -1:
+		_status.text = "%s tourne déjà — quitte-le d'abord" % _running_title
+		_status.modulate = AMBER
+		return
+	match String(item.kind):
+		"forge":
+			_spawn_forge([], "FORGE")
+		"workshop":
+			_spawn_forge(["--workshop"], "WORKSHOP")
+		"game", "cartridge_in":
+			var launch: Dictionary = (item.get("meta", {}) as Dictionary).get("launch", {})
+			var exe := String(launch.get("exe", ""))
+			var args := Array(String(launch.get("args", "")).split(" ", false))
+			if exe != "" and FileAccess.file_exists(exe):
+				_spawn(exe, args, String(item.title))
+			else:
+				_status.text = "%s : pas installé sur cette machine (démo)" % item.title
+				_status.modulate = AMBER
+		_:
+			_status.text = "→  %s  (bientôt)" % item.title
+			_status.modulate = _icon_color(item.kind)
+
+
+# FORGE = un exe exporté si présent, sinon le binaire Godot sur le projet (dev).
+# --shell → FORGE s'ouvre plein écran par-dessus (effet console, pas de fenêtre).
+func _spawn_forge(extra: Array, title: String) -> void:
+	var forge_dir := ProjectSettings.globalize_path("res://").get_base_dir().get_base_dir().path_join("forge")
+	var args := ["--shell"] + extra
+	var exported := forge_dir.path_join("build/SPARK_FORGE.exe")
+	if FileAccess.file_exists(exported):
+		_spawn(exported, args, title)
+		return
+	for g in GODOT_CANDIDATES:
+		if FileAccess.file_exists(g):
+			_spawn(g, ["--path", forge_dir] + args, title)
+			return
+	_status.text = "FORGE introuvable (ni exe exporté, ni Godot)"
+	_status.modulate = AMBER
+
+
+func _spawn(path: String, args: Array, title: String) -> void:
+	var pid := OS.create_process(path, PackedStringArray(args))
+	if pid <= 0:
+		_status.text = "Échec du lancement : %s" % title
+		_status.modulate = AMBER
+		return
+	_running_pid = pid
+	_running_title = title
+	_run_poll = 1.0
+	_status.text = "▶  %s en cours — quitte l'app pour revenir au shell" % title
+	_status.modulate = _accent(_mode)
+
+
+func _on_app_exited() -> void:
+	var title := _running_title
+	_running_pid = -1
+	_running_title = ""
+	# reprend la main : fenêtre au premier plan + focus manette/clavier
+	get_window().move_to_foreground()
+	get_window().grab_focus()
+	_status.text = "De retour sur SPARK — %s fermé" % title
+	_status.modulate = _accent(_mode)
 
 
 # Y — open the media preview.
@@ -1051,7 +1142,8 @@ func _desc_for(item: Dictionary) -> String:
 	match item.kind:
 		"cartridge": return "Insérez une cartouche dans la fente pour révéler et lancer le jeu (plug & play)."
 		"cartridge_in", "game": return "Jeu indé. Appuyez sur Jouer pour lancer."
-		"forge": return "Ouvre l'éditeur Godot pour créer tes propres jeux."
+		"forge": return "Crée tes propres jeux à la manette, sans code."
+		"workshop": return "Joue et remixe les créations de la communauté."
 		"pixel": return "Éditeur de pixel art pour tes sprites et tilesets."
 		"web": return "Navigateur en mode kiosque pour la documentation."
 		"store": return "Parcours le catalogue indé et l'abonnement."
@@ -1404,10 +1496,9 @@ func _make_preview_hints(al: String) -> HBoxContainer:
 func _preview_launch() -> void:
 	if _action_label(_preview_item) == "":
 		return
-	# Placeholder: real launch is the OS session layer's job (Phase 5).
-	_status.text = "→  %s  (lancement à câbler)" % _preview_item.title
-	_status.modulate = _icon_color(_preview_item.kind)
+	var item := _preview_item
 	_close_preview()
+	_launch_item(item)
 
 
 func _close_preview() -> void:
