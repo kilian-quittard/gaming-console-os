@@ -123,6 +123,18 @@ var import_sel := 0
 var workshop_items := []
 var workshop_sel := 0
 var from_workshop := false   # le jeu a été lancé depuis le WORKSHOP → y retourner en quittant
+var workshop_all := []       # liste brute (source) ; workshop_items = vue filtrée/triée
+var workshop_filter := ""    # filtre template ("" = tous)
+var workshop_sort := "recent"   # tri courant (cycle WorkshopFeed.SORTS)
+var workshop_query := ""     # recherche par nom (clavier)
+var workshop_search := false # true = la saisie clavier édite la recherche
+var workshop_plays := {}     # stats locales {fichier: nb parties} (WorkshopStats)
+var creator := {}            # profil créateur local {name, color} (CreatorProfile)
+var profile_open := false    # modal d'édition du profil (écran Projets)
+var cur_author := ""         # identité du projet ouvert (affichée à l'écran titre)
+var cur_author_color := 0
+var cur_remix_of := ""       # crédit remix : nom de la création originale
+var cur_remix_by := ""       # crédit remix : auteur de l'originale
 
 # game config (couleurs, sous-titre — partagé avec GameShell)
 var anim_t := 0.0
@@ -226,6 +238,7 @@ func _ready() -> void:
 	room_ed = RoomEditor.new(self)
 	bg_ed = BgEditor.new(self)
 	ProjectStore.ensure_dir()
+	creator = CreatorProfile.load_profile()
 	# instancie le template du genre courant (rendu du monde + simulation)
 	_load_template(cur_template)
 	queue_redraw()
@@ -363,6 +376,12 @@ func _self_test() -> void:
 	print("p2 ramené près de P1: %s (dist=%.0f, attendu < 200)" % [str(dist < 200.0), dist])
 	level_props = {}
 
+	print("=== IDENTITÉ (profil créateur → signature du save) ===")
+	var ppath := "user://_selftest_profile.json"
+	CreatorProfile.save_profile({"name": "Kilian", "color": 3}, ppath)
+	creator = CreatorProfile.load_profile(ppath)
+	print("profil round-trip : %s / %d (attendu Kilian / 3)" % [String(creator["name"]), int(creator["color"])])
+
 	print("=== PARTAGE (.spark export → import → round-trip) ===")
 	cur_dim = "2D"; cur_template = "platformer"; cur_project = "SelftestShare"
 	grid.clear(); cell_cfg.clear(); levels = {}; cur_level = "1"; screens = {}; level_props = {}
@@ -376,6 +395,7 @@ func _self_test() -> void:
 	var back := ProjectStore.import_spark(sp)
 	var nt: int = int((back.get("levels", {}).get("1", {}).get("tiles", {}) as Dictionary).size()) if back.has("levels") else -1
 	print("import : name='%s', tiles zone1=%d (attendu >0)" % [String(back.get("name", "")), nt])
+	print("signature : author='%s' (attendu Kilian)" % String(back.get("author", "")))
 	grid.erase(Vector2i(10, rows - 2))   # plus de goal
 	print("validation sans goal : '%s' (attendu non vide)" % _validate_for_share())
 
@@ -394,7 +414,37 @@ func _self_test() -> void:
 	var wl := ProjectStore.workshop_list(wdir)
 	print("workshop entries : %d (attendu >=1)" % wl.size())
 	if wl.size() > 0:
-		print("  -> '%s' par %s (%s)" % [String(wl[0]["name"]), String(wl[0]["author"]), String(wl[0]["dim"])])
+		print("  -> '%s' par %s (%s)  mtime>0:%s" % [String(wl[0]["name"]), String(wl[0]["author"]),
+			String(wl[0]["dim"]), str(int(wl[0]["mtime"]) > 0)])
+
+	print("=== REMIX (make_remix : nouveau nom + crédit à l'original) ===")
+	var rx := ProjectStore.make_remix(back, "Rival", 5)
+	print("remix name='%s' (attendu commence par 'Remix de')" % String(rx.get("name", "")))
+	print("remix_of='%s' / remix_by='%s' (attendu SelftestShare / Kilian)" % [String(rx.get("remix_of", "")), String(rx.get("remix_by", ""))])
+	print("remix author='%s' (attendu Rival)  progress reset:%s" % [String(rx.get("author", "")),
+		str(int(rx.get("progress", {}).get("unlocked", -1)) == 1)])
+
+	print("=== STATS (compteur de parties local) ===")
+	var spath := "user://_selftest_stats.json"
+	WorkshopStats.save_stats({}, spath)   # reset isolé
+	WorkshopStats.add_play("demo.spark", spath)
+	var n2 := WorkshopStats.add_play("demo.spark", spath)
+	print("plays demo.spark = %d (attendu 2)" % n2)
+	print("plays inconnu = %d (attendu 0)" % WorkshopStats.plays_of(WorkshopStats.load_stats(spath), "autre.spark"))
+
+	print("=== FEED (filtre + recherche + tri) ===")
+	var fake := [
+		{"name": "Château Rouge", "template": "platformer", "path": "a.spark", "mtime": 30},
+		{"name": "Donjon Sombre", "template": "topdown", "path": "b.spark", "mtime": 20},
+		{"name": "Château Bleu", "template": "platformer", "path": "c.spark", "mtime": 10},
+	]
+	var pl := {"c.spark": 9, "a.spark": 1}
+	print("filtre topdown : %d (attendu 1)" % WorkshopFeed.view(fake, "topdown", "recent", "", pl).size())
+	print("recherche 'château' : %d (attendu 2)" % WorkshopFeed.view(fake, "", "recent", "château", pl).size())
+	print("tri joués 1er = '%s' (attendu Château Bleu)" % String((WorkshopFeed.view(fake, "", "joués", "", pl)[0] as Dictionary)["name"]))
+	print("tri récent 1er = '%s' (attendu Château Rouge)" % String((WorkshopFeed.view(fake, "", "recent", "", pl)[0] as Dictionary)["name"]))
+	print("filtres présents : %s (attendu ['', platformer, topdown])" % str(WorkshopFeed.filters_of(fake)))
+
 	level_props = {}
 	get_tree().quit()
 
@@ -467,6 +517,10 @@ func _dim_input(e: InputEvent) -> void:
 func _list_input(e: InputEvent) -> void:
 	if import_open:
 		_import_input(e); return
+	if profile_open:
+		_profile_input(e); return
+	if _press(e, [KEY_P], [JOY_BUTTON_Y]):
+		profile_open = true; queue_redraw(); return
 	# entrées = projets + "Nouveau" + "Importer" + "WORKSHOP"
 	var np := proj_list.size()
 	var n := np + 3
@@ -512,11 +566,7 @@ func _do_import(entry: Dictionary) -> void:
 	if proj.is_empty():
 		_set_toast("Import impossible (fichier illisible)"); return
 	# nom unique : ne pas écraser un projet existant
-	var base := String(proj.get("name", "Création importée"))
-	var nm := base
-	var i := 2
-	while ProjectStore.exists(nm):
-		nm = "%s (%d)" % [base, i]; i += 1
+	var nm := ProjectStore.unique_name(String(proj.get("name", "Création importée")))
 	proj["name"] = nm
 	ProjectStore.save(proj)
 	proj_list = ProjectStore.list(cur_dim)
@@ -526,14 +576,73 @@ func _do_import(entry: Dictionary) -> void:
 	queue_redraw()
 
 
+# ============================================================= PROFIL CRÉATEUR
+# modal simple : clavier = nom, ◄► = couleur d'avatar, A/Entrée = valider
+func _profile_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed:
+		var k := e as InputEventKey
+		if k.keycode == KEY_ENTER or k.keycode == KEY_ESCAPE:
+			_profile_close(); return
+		if k.keycode == KEY_BACKSPACE:
+			creator["name"] = String(creator["name"]).substr(0, maxi(0, String(creator["name"]).length() - 1))
+			queue_redraw(); return
+		if k.keycode == KEY_LEFT:
+			_profile_color(-1); return
+		if k.keycode == KEY_RIGHT:
+			_profile_color(1); return
+		if k.unicode > 31 and String(creator["name"]).length() < 16:
+			creator["name"] = String(creator["name"]) + char(k.unicode)
+			queue_redraw()
+		return
+	if _press(e, [], [JOY_BUTTON_DPAD_LEFT]):
+		_profile_color(-1); return
+	if _press(e, [], [JOY_BUTTON_DPAD_RIGHT]):
+		_profile_color(1); return
+	if _press(e, [], [JOY_BUTTON_A, JOY_BUTTON_B, JOY_BUTTON_START]):
+		_profile_close(); return
+
+
+func _profile_color(dir: int) -> void:
+	var n := CreatorProfile.AVATAR_COLORS.size()
+	creator["color"] = (int(creator.get("color", 0)) + dir + n) % n
+	queue_redraw()
+
+
+func _profile_close() -> void:
+	if String(creator.get("name", "")).strip_edges() == "":
+		creator["name"] = CreatorProfile.DEFAULT_NAME
+	CreatorProfile.save_profile(creator)
+	profile_open = false
+	_set_toast("Profil : %s" % String(creator["name"]))
+	queue_redraw()
+
+
 # ============================================================= WORKSHOP v0
 func _open_workshop(reset := true) -> void:
-	workshop_items = ProjectStore.workshop_list()   # v0 = dossier local ; v1 = HTTPRequest
-	for it in workshop_items:                        # mini-rendu mis en cache (1 fois à l'ouverture)
+	workshop_all = ProjectStore.workshop_list()   # v0 = dossier local ; v1 = HTTPRequest
+	for it in workshop_all:                        # mini-rendu mis en cache (1 fois à l'ouverture)
 		it["thumb"] = _spark_thumb(String(it["path"]))
-	if reset: workshop_sel = 0
-	else: workshop_sel = clampi(workshop_sel, 0, maxi(0, workshop_items.size() - 1))
+	workshop_plays = WorkshopStats.load_stats()
+	if reset:
+		workshop_filter = ""; workshop_query = ""; workshop_search = false
+	_workshop_refresh(reset)
 	screen = "workshop"
+	queue_redraw()
+
+
+# reconstruit la vue (filtre + recherche + tri) depuis la liste brute
+func _workshop_refresh(reset_sel := false) -> void:
+	workshop_items = WorkshopFeed.view(workshop_all, workshop_filter, workshop_sort, workshop_query, workshop_plays)
+	if reset_sel: workshop_sel = 0
+	else: workshop_sel = clampi(workshop_sel, 0, maxi(0, workshop_items.size() - 1))
+
+
+func _workshop_cycle_filter(dir: int) -> void:
+	var fl := WorkshopFeed.filters_of(workshop_all)
+	var i := fl.find(workshop_filter)
+	if i < 0: i = 0
+	workshop_filter = String(fl[(i + dir + fl.size()) % fl.size()])
+	_workshop_refresh(true)
 	queue_redraw()
 
 
@@ -575,8 +684,35 @@ func _draw_thumb(r: Rect2, thumb: Dictionary) -> void:
 
 
 func _workshop_input(e: InputEvent) -> void:
+	# mode recherche : la saisie clavier édite la requête (filtre live)
+	if workshop_search:
+		if e is InputEventKey and (e as InputEventKey).pressed:
+			var k := e as InputEventKey
+			if k.keycode == KEY_ENTER:
+				workshop_search = false; queue_redraw(); return
+			if k.keycode == KEY_ESCAPE:
+				workshop_query = ""; workshop_search = false; _workshop_refresh(true); queue_redraw(); return
+			if k.keycode == KEY_BACKSPACE:
+				workshop_query = workshop_query.substr(0, maxi(0, workshop_query.length() - 1))
+				_workshop_refresh(true); queue_redraw(); return
+			if k.unicode > 31 and workshop_query.length() < 24:
+				workshop_query += char(k.unicode)
+				_workshop_refresh(true); queue_redraw()
+		return
 	if _press(e, [KEY_ESCAPE, KEY_BACKSPACE], [JOY_BUTTON_B]):
+		if workshop_query != "" or workshop_filter != "":   # 1er B = enlever filtres, 2e = sortir
+			workshop_query = ""; workshop_filter = ""; _workshop_refresh(true); queue_redraw(); return
 		screen = "list"; queue_redraw(); return
+	if _press(e, [KEY_S, KEY_SLASH], []):
+		workshop_search = true; queue_redraw(); return
+	if _press(e, [KEY_T], [JOY_BUTTON_Y]):   # tri suivant (récent → joués → nom)
+		var i := WorkshopFeed.SORTS.find(workshop_sort)
+		workshop_sort = String(WorkshopFeed.SORTS[(i + 1) % WorkshopFeed.SORTS.size()])
+		_workshop_refresh(true); queue_redraw(); return
+	if _press(e, [KEY_RIGHT, KEY_F], [JOY_BUTTON_RIGHT_SHOULDER]):
+		_workshop_cycle_filter(1); return
+	if _press(e, [KEY_LEFT], [JOY_BUTTON_LEFT_SHOULDER]):
+		_workshop_cycle_filter(-1); return
 	if workshop_items.is_empty():
 		return
 	if _press(e, [KEY_DOWN], [JOY_BUTTON_DPAD_DOWN]):
@@ -585,6 +721,8 @@ func _workshop_input(e: InputEvent) -> void:
 		workshop_sel = (workshop_sel - 1 + workshop_items.size()) % workshop_items.size(); queue_redraw()
 	elif _press(e, [KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A]):
 		_workshop_play(workshop_items[workshop_sel])
+	elif _press(e, [KEY_R], [JOY_BUTTON_X]):
+		_workshop_remix(workshop_items[workshop_sel])
 
 
 # tape une création → on la JOUE direct (chargement éphémère, écran titre de l'auteur)
@@ -592,10 +730,29 @@ func _workshop_play(entry: Dictionary) -> void:
 	var proj := ProjectStore.import_spark(String(entry["path"]))
 	if proj.is_empty():
 		_set_toast("Création illisible"); return
+	# +1 partie locale (v1 backend : ce compteur remontera au créateur)
+	WorkshopStats.add_play(String(entry["path"]).get_file())
+	workshop_plays = WorkshopStats.load_stats()
 	_apply_project_data(proj, String(proj.get("dim", "2D")), String(proj.get("template", "platformer")),
 		"▶ " + String(proj.get("name", "Création")), false)   # go_dash=false : pas de dash, on enchaîne le jeu
 	_game_start()           # → écran titre de SA création, puis on joue
 	from_workshop = true    # après _game_start (qui le remet à false) → retour feed en quittant
+
+
+# X : REMIXER — copie la création comme NOUVEAU projet éditable À MOI, crédit à l'original.
+# Tue la page blanche : on part d'un jeu qui marche, on le bidouille, on repartage.
+func _workshop_remix(entry: Dictionary) -> void:
+	var proj := ProjectStore.import_spark(String(entry["path"]))
+	if proj.is_empty():
+		_set_toast("Création illisible"); return
+	var rx := ProjectStore.make_remix(proj, String(creator.get("name", "")), int(creator.get("color", 0)))
+	if not ProjectStore.save(rx):
+		_set_toast("Remix impossible (sauvegarde)"); return
+	from_workshop = false
+	proj_list = ProjectStore.list(cur_dim)
+	_apply_project_data(rx, String(rx.get("dim", "2D")), String(rx.get("template", "platformer")),
+		String(rx.get("name", "Remix")))   # go_dash=true → dash du nouveau projet
+	_set_toast("Remix créé : %s — à toi de jouer !" % String(rx.get("name", "")))
 
 
 func _tmpl_input(e: InputEvent) -> void:
@@ -1479,6 +1636,9 @@ func _new_project(template_id: String) -> void:
 	var i := 1
 	while ProjectStore.exists("%s %d" % [base, i]): i += 1
 	cur_project = "%s %d" % [base, i]
+	cur_author = String(creator.get("name", ""))
+	cur_author_color = int(creator.get("color", 0))
+	cur_remix_of = ""; cur_remix_by = ""
 	cols = LEVEL_COLS_DEF
 	bg_theme = 0
 	undo_stack.clear(); redo_stack.clear()
@@ -1525,6 +1685,10 @@ func _apply_project_data(data: Dictionary, dim: String, template: String, pname:
 	cur_template = template
 	_load_template(cur_template)
 	cur_project = pname
+	cur_author = String(data.get("author", ""))
+	cur_author_color = int(data.get("author_color", 0))
+	cur_remix_of = String(data.get("remix_of", ""))
+	cur_remix_by = String(data.get("remix_by", ""))
 	var pr = data.get("props", {})
 	level_props = pr if typeof(pr) == TYPE_DICTIONARY else {}
 	game_unlocked = maxi(1, int(data.get("progress", {}).get("unlocked", 1)))
@@ -1595,10 +1759,17 @@ func _build_save_dict() -> Dictionary:
 	var lv := {}
 	for id in all_levels:
 		lv[id] = _serialize_level(all_levels[id])
-	return {"name": cur_project, "dim": cur_dim, "template": cur_template,
+	var d := {"name": cur_project, "dim": cur_dim, "template": cur_template,
 		"props": level_props, "screens": screens,
 		"levels": lv, "cur_level": cur_level,
-		"progress": {"unlocked": game_unlocked}}
+		"progress": {"unlocked": game_unlocked},
+		# identité : celui qui sauvegarde signe (voyagera dans le .spark → feed/titre)
+		"author": String(creator.get("name", "")),
+		"author_color": int(creator.get("color", 0))}
+	if cur_remix_of != "":   # crédit remix conservé à travers les saves
+		d["remix_of"] = cur_remix_of
+		d["remix_by"] = cur_remix_by
+	return d
 
 
 func _save_current() -> void:
@@ -2585,8 +2756,16 @@ func _draw_list(vp: Vector2) -> void:
 		_text(f, Vector2(vp.x * 0.5 - 210, y), label, col, 18)
 	if proj_list.is_empty():
 		_ctext(f, vp.x * 0.5, y0 - 30, "Aucun projet — crée le premier", Color(1, 1, 1, 0.4), 15)
-	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A ouvrir    B retour", Color(1, 1, 1, 0.6), 16)
+	# chip profil créateur (haut droite) : avatar + nom — "le créateur est VU"
+	var av := CreatorProfile.avatar_color(creator)
+	var cname := String(creator.get("name", CreatorProfile.DEFAULT_NAME))
+	var chip_x := vp.x - 60.0 - f.get_string_size(cname, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	draw_circle(Vector2(chip_x, 44), 11.0, av)
+	_ctext(f, chip_x, 49, CreatorProfile.initial(cname), Color("11161f"), 13)
+	_text(f, Vector2(chip_x + 18, 49), cname, Color(1, 1, 1, 0.7), 14)
+	_ctext(f, vp.x * 0.5, vp.y - 40, "▲▼ choisir    A ouvrir    Y profil    B retour", Color(1, 1, 1, 0.6), 16)
 	if import_open: _draw_import(vp)
+	if profile_open: _draw_profile(vp)
 
 
 func _draw_import(vp: Vector2) -> void:
@@ -2616,21 +2795,59 @@ func _draw_import(vp: Vector2) -> void:
 	_ctext(f, vp.x * 0.5, o.y + h - 16, "▲▼ choisir    A importer    B retour", Color(1, 1, 1, 0.5), 13)
 
 
+# modal PROFIL : nom (clavier) + couleur d'avatar (◄►) — signé sur chaque création
+func _draw_profile(vp: Vector2) -> void:
+	var f := ThemeDB.fallback_font
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.78))   # voile
+	var w := 460.0
+	var h := 300.0
+	var o := vp * 0.5 - Vector2(w * 0.5, h * 0.5)
+	draw_rect(Rect2(o, Vector2(w, h)), Color("11161f"))
+	draw_rect(Rect2(o, Vector2(w, h)), Color("f39c12"), false, 2.0)
+	_ctext(f, vp.x * 0.5, o.y + 36, "Profil créateur", Color("f39c12"), 22)
+	_ctext(f, vp.x * 0.5, o.y + 60, "Ton nom + ton avatar signent tes créations", Color(1, 1, 1, 0.45), 13)
+	# gros avatar de prévisualisation
+	var av := CreatorProfile.avatar_color(creator)
+	var cname := String(creator.get("name", ""))
+	draw_circle(Vector2(vp.x * 0.5, o.y + 122), 34.0, av)
+	_ctext(f, vp.x * 0.5, o.y + 132, CreatorProfile.initial(cname), Color("11161f"), 30)
+	_ctext(f, vp.x * 0.5, o.y + 172, "◄  couleur  ►", Color(1, 1, 1, 0.4), 12)
+	# champ nom (curseur clignotant)
+	var shown := cname + ("_" if int(anim_t * 2.0) % 2 == 0 else " ")
+	draw_rect(Rect2(Vector2(o.x + 90, o.y + 192), Vector2(w - 180, 34)), Color(1, 1, 1, 0.08))
+	_ctext(f, vp.x * 0.5, o.y + 215, shown, Color.WHITE, 18)
+	_ctext(f, vp.x * 0.5, o.y + h - 20, "clavier : nom    A/Entrée valider", Color(1, 1, 1, 0.5), 13)
+
+
 func _draw_workshop(vp: Vector2) -> void:
 	_shell_bg(vp, false)
 	var f := ThemeDB.fallback_font
 	_ctext(f, vp.x * 0.5, 64, "🌐  WORKSHOP", Color("b388ff"), 34)
 	_ctext(f, vp.x * 0.5, 96, "Joue les créations de la communauté", Color(1, 1, 1, 0.55), 15)
+	# barre d'état : tri · filtre · recherche (mode saisie = champ surligné)
+	var sort_lbl := String({"recent": "récent", "joués": "plus joués", "nom": "A→Z"}.get(workshop_sort, workshop_sort))
+	var filt_lbl := workshop_filter if workshop_filter != "" else "tous"
+	if workshop_search:
+		var q := workshop_query + ("_" if int(anim_t * 2.0) % 2 == 0 else " ")
+		_ctext(f, vp.x * 0.5, 122, "Recherche : %s" % q, Color("f39c12"), 15)
+	else:
+		var status := "Tri : %s    ·    Filtre : %s" % [sort_lbl, filt_lbl]
+		if workshop_query != "": status += "    ·    « %s »" % workshop_query
+		_ctext(f, vp.x * 0.5, 122, status, Color(1, 1, 1, 0.45), 13)
 	if workshop_items.is_empty():
-		_ctext(f, vp.x * 0.5, vp.y * 0.45, "Aucune création disponible.", Color(1, 1, 1, 0.7), 18)
-		_ctext(f, vp.x * 0.5, vp.y * 0.45 + 28, "(WORKSHOP v0 : dépose des .spark + index.json dans)", Color(1, 1, 1, 0.4), 13)
-		_ctext(f, vp.x * 0.5, vp.y * 0.45 + 48, ProjectStore.WORKSHOP_DIR, Color(1, 1, 1, 0.4), 12)
+		if workshop_all.is_empty():
+			_ctext(f, vp.x * 0.5, vp.y * 0.45, "Aucune création disponible.", Color(1, 1, 1, 0.7), 18)
+			_ctext(f, vp.x * 0.5, vp.y * 0.45 + 28, "(WORKSHOP v0 : dépose des .spark + index.json dans)", Color(1, 1, 1, 0.4), 13)
+			_ctext(f, vp.x * 0.5, vp.y * 0.45 + 48, ProjectStore.WORKSHOP_DIR, Color(1, 1, 1, 0.4), 12)
+		else:
+			_ctext(f, vp.x * 0.5, vp.y * 0.45, "Rien ne correspond au filtre / à la recherche.", Color(1, 1, 1, 0.7), 16)
+			_ctext(f, vp.x * 0.5, vp.y * 0.45 + 26, "B : réinitialiser", Color(1, 1, 1, 0.4), 13)
 		_ctext(f, vp.x * 0.5, vp.y - 30, "B retour", Color(1, 1, 1, 0.5), 14)
 		return
 	# feed : cartes empilées, fenêtre défilante centrée sur la sélection
 	var card_h := 78.0
 	var gap := 12.0
-	var top := 130.0
+	var top := 142.0
 	var vis: int = mini(workshop_items.size(), int((vp.y - top - 60.0) / (card_h + gap)))
 	var first: int = clampi(workshop_sel - vis / 2, 0, maxi(0, workshop_items.size() - vis))
 	for k in vis:
@@ -2648,11 +2865,22 @@ func _draw_workshop(vp: Vector2) -> void:
 		# pastille dim en coin de la miniature
 		_text(f, thumb.position + Vector2(4, 16), String(it["dim"]), Color("b388ff"), 12)
 		var tx := thumb.position.x + thumb.size.x + 16
-		_text(f, Vector2(tx, r.position.y + 32), String(it["name"]), Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
-		_text(f, Vector2(tx, r.position.y + 58), "par %s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
+		var nm := String(it["name"])
+		if String(it.get("remix_of", "")) != "": nm = "↻ " + nm   # badge remix
+		_text(f, Vector2(tx, r.position.y + 32), nm, Color.WHITE if on else Color(1, 1, 1, 0.8), 20)
+		# avatar (cercle + initiale) + auteur + genre
+		var acol: Color = CreatorProfile.AVATAR_COLORS[clampi(int(it.get("author_color", 0)), 0, CreatorProfile.AVATAR_COLORS.size() - 1)]
+		draw_circle(Vector2(tx + 9, r.position.y + 53), 9.0, acol)
+		_ctext(f, tx + 9, r.position.y + 57, CreatorProfile.initial(String(it["author"])), Color("11161f"), 11)
+		_text(f, Vector2(tx + 24, r.position.y + 58), "%s   ·   %s" % [String(it["author"]), String(it["template"])], Color(1, 1, 1, 0.5), 13)
+		# nb de parties locales (▶ N) en haut à droite de la carte
+		var np := WorkshopStats.plays_of(workshop_plays, String(it["path"]).get_file())
+		if np > 0:
+			var ptxt := "▶ %d" % np
+			_text(f, Vector2(r.position.x + r.size.x - 14 - f.get_string_size(ptxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x, r.position.y + 24), ptxt, Color(1, 1, 1, 0.45), 13)
 		if on:
-			_text(f, Vector2(r.position.x + r.size.x - 90, r.position.y + card_h * 0.6), "▶ A", Color("b388ff"), 22)
-	_ctext(f, vp.x * 0.5, vp.y - 26, "▲▼ choisir    A jouer    B retour    (%d créations)" % workshop_items.size(), Color(1, 1, 1, 0.5), 13)
+			_text(f, Vector2(r.position.x + r.size.x - 90, r.position.y + card_h * 0.72), "▶ A", Color("b388ff"), 22)
+	_ctext(f, vp.x * 0.5, vp.y - 26, "A jouer    X remixer    Y tri    L/R filtre    S rechercher    B retour    (%d)" % workshop_items.size(), Color(1, 1, 1, 0.5), 13)
 
 
 func _draw_template(vp: Vector2) -> void:
@@ -2684,6 +2912,13 @@ func _draw_game(vp: Vector2) -> void:
 			var ctx := {"accent": st.accent, "bg": BG_THEMES[st.bg][0],
 				"title_text": cur_project, "subtitle": st.subtitle, "anim_t": anim_t}
 			ScreenArt.draw_title(self, full, data, ctx)
+			# crédit créateur ("le créateur est VU") + lignée du remix
+			if cur_author != "":
+				var acol: Color = CreatorProfile.AVATAR_COLORS[clampi(cur_author_color, 0, CreatorProfile.AVATAR_COLORS.size() - 1)]
+				draw_circle(Vector2(vp.x * 0.5 - f.get_string_size("par " + cur_author, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x * 0.5 - 14, vp.y - 62), 8.0, acol)
+				_ctext(f, vp.x * 0.5, vp.y - 57, "par " + cur_author, Color(1, 1, 1, 0.55), 14)
+			if cur_remix_of != "":
+				_ctext(f, vp.x * 0.5, vp.y - 38, "↻ remix de « %s » (par %s)" % [cur_remix_of, cur_remix_by], Color(1, 1, 1, 0.35), 12)
 			_ctext(f, vp.x * 0.5, vp.y - 18, "A jouer    B quitter", Color(1, 1, 1, 0.4), 13)
 		"select":
 			draw_rect(full, BG_THEMES[st.bg][0])
