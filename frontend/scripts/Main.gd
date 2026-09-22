@@ -1110,15 +1110,18 @@ func _launch_item(item: Dictionary) -> void:
 			_open_forge(true)
 		"game", "cartridge_in":
 			var launch: Dictionary = (item.get("meta", {}) as Dictionary).get("launch", {})
-			var exe := String(launch.get("exe", ""))
-			var args := Array(String(launch.get("args", "")).split(" ", false))
-			if exe != "" and FileAccess.file_exists(exe):
+			var title := String(item.title)
+			# Launcher traduit l'entrée catalogue en commande réelle (natif/Proton).
+			var plan := Launcher.plan(launch, title)
+			if plan.ok:
+				if plan.runtime == "proton":
+					Launcher.ensure_prefix(title)
 				if get_tree().root.has_meta("spark_suspended"):
-					_open_confirm(String(item.title), exe, args)   # préviens avant de tuer la session
+					_open_confirm(title, plan.path, plan.args)   # préviens avant de tuer la session
 				else:
-					_spawn(exe, args, String(item.title))
+					_spawn(plan.path, plan.args, title)
 			else:
-				_status.text = "%s : pas installé sur cette machine (démo)" % item.title
+				_status.text = "%s : %s" % [title, plan.error]
 				_status.modulate = AMBER
 		_:
 			_status.text = "→  %s  (bientôt)" % item.title

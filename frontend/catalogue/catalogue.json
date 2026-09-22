@@ -1,5 +1,5 @@
 {
-  "_comment": "SPARK catalogue (seed = jeux libres/FOSS, plomberie + démo). Schéma = fondation store + système d'onboarding. launch = config par jeu (Proton/natif, exe, args, FSR, réso) testée plus tard sur GPU réel.",
+  "_comment": "SPARK catalogue (seed = jeux libres/FOSS, plomberie + démo). Schéma = fondation store + système d'onboarding. launch = config par jeu. runtime: native (binaire Linux) | proton (jeu Windows via umu-run). Champs optionnels: gameid (protonfixes), proton (PROTONPATH, ex. GE-Proton). FSR/réso testés plus tard sur GPU réel.",
   "version": 1,
   "games": [
     {
@@ -11,7 +11,7 @@
       "price": 0,
       "license": "Steam (installé, DRM-free)",
       "desc": "Le jeu du film Pixar : cours dans Radiator Springs avec Flash McQueen.",
-      "launch": { "runtime": "native", "exe": "E:/Jeux/SteamLibrary/steamapps/common/Cars/Cars.exe", "args": "", "fsr": "off", "res": "1080p" }
+      "launch": { "runtime": "proton", "exe": "E:/Jeux/SteamLibrary/steamapps/common/Cars/Cars.exe", "args": "", "fsr": "off", "res": "1080p" }
     },
     {
       "title": "SuperTuxKart",
